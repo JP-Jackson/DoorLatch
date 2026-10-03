@@ -6,7 +6,7 @@
 // Blue area (rows 16-63) runs one of two playlists, restarting on reed change:
 //   Closed: JP + padlock slides in from the right, locks, padlock rattles (x and y)
 //           -> "Need something?" -> "Get A-1" scrolls in (24pt) until "Get" is off,
-//              "A-1" holds a split second -> "or"
+//              "A-1" holds 1 s -> "or"
 //           -> "Call Your Manager" slides in from the right
 //           -> "Polk Production Technologies" (fades) -> repeat.
 //   Open (inverted colors): "Close the Cage" -> JP unlock -> "CLOSE THE FUCKING CAGE"
@@ -36,8 +36,8 @@ const uint16_t FADE_STEP_MS = 50;    // 16 steps each way (Polk only)
 const uint16_t LOCK_MS = 3000;       // closed JP lock animation, total
 const uint16_t UNLOCK_MS = 2000;     // open JP unlock animation, total
 const uint16_t NEED_MS = 2000;       // "Need something?" on screen
-const uint16_t GET_SCROLL_MS = 1600; // "Get A-1" scrolls until "Get" is off-screen
-const uint16_t A1_MS = 350;          // "A-1" alone, centered
+const uint16_t GET_SCROLL_MS = 1720; // "Get A-1" scrolls until "Get" is off-screen
+const uint16_t A1_MS = 1000;         // "A-1" alone after "Get" leaves
 const uint16_t GET_MS = GET_SCROLL_MS + A1_MS;
 const uint16_t OR_MS = 700;          // "or" on screen
 const uint16_t SLIDE_MS = 400;       // "Call Your Manager" slide-in
@@ -236,8 +236,9 @@ void drawMsgScene(uint32_t t) {
   }
   t -= NEED_MS;
   if (t < GET_MS) {
-    // "Get " advance is 92 px, "A-1" is 67 px: stop with "A-1" centered.
-    const int16_t STOP_X = (128 - 67) / 2 - 92;
+    // "Get" glyphs span 77 px: stop the moment they're fully off the left
+    // edge. "A-1" then sits at x = 14 (the space keeps it off the edge).
+    const int16_t STOP_X = -78;
     int16_t x = (t < GET_SCROLL_MS) ? 128 - (int16_t)((128 - STOP_X) * t / GET_SCROLL_MS) : STOP_X;
     display.setFont(&FreeSansBold24pt7b);
     display.setTextSize(1);
