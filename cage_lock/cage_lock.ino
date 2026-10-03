@@ -8,7 +8,8 @@
 //           -> "Need something?" -> "Get A-1" scrolls (24pt) -> "or"
 //           -> "Call Your Manager" slides in from the right
 //           -> "Polk Production Technologies" (fades) -> repeat.
-//   Open (inverted colors): JP + padlock unlocks -> close-the-cage message -> repeat.
+//   Open (inverted colors): "Close the Cage" -> JP unlock -> "CLOSE THE FUCKING CAGE"
+//           scrolls (24pt) -> JP unlock -> repeat.
 // On-board LED mirrors the reed: on = closed.
 // Libraries: Adafruit SSD1306, Adafruit GFX Library.
 #include <Wire.h>
@@ -44,7 +45,10 @@ const uint16_t GAP_MS = 300;         // blank between screens
 
 // Open message (two lines, FreeSans Bold 12pt, max ~128 px each)
 const char OPEN_L1[] = "Close the";
-const char OPEN_L2[] = "cage door!";
+const char OPEN_L2[] = "Cage";
+const char OPEN_SCROLL[] = "CLOSE THE FUCKING CAGE";
+const int16_t OPEN_SCROLL_W = 649;   // px in FreeSans Bold 24pt
+const uint16_t OPEN_SCROLL_MS = 6500; // same speed as "Get A-1"
 
 const int16_t BAND_H = 16, BLUE_Y = 16, BLUE_H = 48;
 const int16_t LOGO_Y = BLUE_Y + (BLUE_H - JP_H) / 2;
@@ -63,9 +67,9 @@ uint32_t tTimer = 0;
 // Blue area: play the current playlist; Polk fades, everything else cuts.
 enum BluePhase { B_IN, B_HOLD, B_OUT, B_GAP };
 BluePhase bPhase = B_IN;
-enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG };
+enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENSCROLL };
 const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_POLK};
-const uint8_t OPEN_LIST[] = {I_UNLOCK, I_OPENMSG};
+const uint8_t OPEN_LIST[] = {I_OPENMSG, I_UNLOCK, I_OPENSCROLL, I_UNLOCK};
 uint8_t listPos = 0;
 uint8_t item = I_LOCK;
 uint8_t fadeLevel = 0;               // 0 = blank, 16 = fully drawn
@@ -204,15 +208,15 @@ void drawBig(const char *s, int16_t baseline) {
   display.setFont(NULL);
 }
 
-// "Get A-1" in 24pt (159 px wide), scrolled right to left across the area.
-void drawGetScroll(uint32_t t) {
-  const int16_t W = 159, TRAVEL = 128 + W;
-  int16_t x = 128 - (int16_t)((uint32_t)TRAVEL * t / GET_MS);
+// One line of 24pt text scrolled right to left across the blue area.
+void drawScroll24(const char *s, int16_t w, uint32_t t, uint16_t dur, bool inv) {
+  int16_t x = 128 - (int16_t)((uint32_t)(128 + w) * t / dur);
+  if (inv) display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
   display.setFont(&FreeSansBold24pt7b);
   display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
+  display.setTextColor(inv ? SSD1306_BLACK : SSD1306_WHITE);
   display.setCursor(x, 57);  // 34 px cap height centered in rows 16-63
-  display.print("Get A-1");
+  display.print(s);
   display.setFont(NULL);
 }
 
@@ -225,7 +229,7 @@ void drawMsgScene(uint32_t t) {
   }
   t -= NEED_MS;
   if (t < GET_MS) {
-    drawGetScroll(t);
+    drawScroll24("Get A-1", 159, t, GET_MS, false);
     return;
   }
   t -= GET_MS;
@@ -270,6 +274,7 @@ uint16_t itemHoldMs(uint8_t i) {
     case I_MSG: return NEED_MS + GET_MS + OR_MS + SLIDE_MS + CALL_MS;
     case I_POLK: return TEXT_HOLD_MS;
     case I_UNLOCK: return UNLOCK_MS;
+    case I_OPENSCROLL: return OPEN_SCROLL_MS;
     default: return OPEN_MSG_MS;
   }
 }
@@ -303,6 +308,7 @@ void drawBlue() {
       case I_POLK: drawCompany(); break;
       case I_UNLOCK: drawUnlockAnim(t); break;
       case I_OPENMSG: drawOpenMsg(); break;
+      case I_OPENSCROLL: drawScroll24(OPEN_SCROLL, OPEN_SCROLL_W, t, OPEN_SCROLL_MS, true); break;
     }
     applyFade(fadeLevel);
   }
