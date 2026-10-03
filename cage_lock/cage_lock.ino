@@ -2,11 +2,11 @@
 // Yellow band (rows 0-15):
 //   Reed closed: "Cage Closed" scrolls continuously.
 //   Reed open:   "Cage OPEN" centered, flashing normal <-> inverted.
-// Blue area (rows 16-63): each screen fades in, holds, fades out, in order:
-//   inverted JP logo -> JP + padlock locking -> "Polk Production Technologies".
-//   Closing the reed jumps straight to the padlock animation.
-//   Between the lock and Polk: "Need something?" cuts in (no fade), then an
-//   inverted "Call your Manager" panel slides in from the left and cuts out.
+// Blue area (rows 16-63) runs one of two playlists, restarting on reed change:
+//   Closed: JP + padlock slides in from the right and locks
+//           -> "Need something?" -> "Call your Manager" slides in
+//           -> "Polk Production Technologies" (fades) -> repeat.
+//   Open (inverted colors): JP + padlock unlocks -> close-the-cage message -> repeat.
 // On-board LED mirrors the reed: on = closed.
 // Libraries: Adafruit SSD1306, Adafruit GFX Library.
 #include <Wire.h>
@@ -26,18 +26,22 @@ const uint16_t DEBOUNCE_MS = 50;
 const uint8_t SCROLL_PX = 2;         // px per frame
 const uint16_t FLASH_MS = 300;       // open: time per normal/inverted half
 
-// Logo timing
-const uint16_t FADE_STEP_MS = 50;    // 16 steps each way
-const uint16_t LOGO_HOLD_MS = 1000;
-const uint16_t LOCK_HOLD_MS = 2200;  // lock animation runs inside this
+// Blue area timing
+const uint16_t FADE_STEP_MS = 50;    // 16 steps each way (Polk only)
+const uint16_t LOCK_MS = 3000;       // closed JP lock animation, total
+const uint16_t UNLOCK_MS = 2000;     // open JP unlock animation, total
 const uint16_t NEED_MS = 2000;       // "Need something?" on screen
 const uint16_t SLIDE_MS = 400;       // "Call your Manager" slide-in
 const uint16_t CALL_MS = 2000;       // "Call your Manager" on screen
 const uint16_t TEXT_HOLD_MS = 3000;  // company name
-const uint16_t GAP_MS = 300;         // blank between fades
+const uint16_t OPEN_MSG_MS = 3000;   // open message
+const uint16_t GAP_MS = 300;         // blank between screens
+
+// Open message (two lines, FreeSans Bold 12pt, max ~128 px each)
+const char OPEN_L1[] = "Close the";
+const char OPEN_L2[] = "cage door!";
 
 const int16_t BAND_H = 16, BLUE_Y = 16, BLUE_H = 48;
-const int16_t LOGO_X = (128 - JP_W) / 2;
 const int16_t LOGO_Y = BLUE_Y + (BLUE_H - JP_H) / 2;
 
 const uint8_t BAYER[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
@@ -51,11 +55,14 @@ int16_t scrollX = 128;
 bool flashInv = false;
 uint32_t tTimer = 0;
 
-// Blue area cycle: each item fades in, holds, fades out, then a short gap.
+// Blue area: play the current playlist; Polk fades, everything else cuts.
 enum BluePhase { B_IN, B_HOLD, B_OUT, B_GAP };
 BluePhase bPhase = B_IN;
-enum BlueItem { I_LOGO, I_LOCK, I_MSG, I_POLK, I_COUNT };
-uint8_t item = I_LOGO;
+enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG };
+const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_POLK};
+const uint8_t OPEN_LIST[] = {I_UNLOCK, I_OPENMSG};
+uint8_t listPos = 0;
+uint8_t item = I_LOCK;
 uint8_t fadeLevel = 0;               // 0 = blank, 16 = fully drawn
 uint32_t bTimer = 0;
 
@@ -121,29 +128,17 @@ void printCentered(const char *s, int16_t baseline, int16_t xoff = 0) {
   display.print(s);
 }
 
-// JP logo + padlock, inverted style. t = ms into the animation.
-//   0-400 ms: shackle raised (open)
-//   400-800 ms: shackle drops into the body
-//   800-950 ms: "click" flash (colors swap)
-void drawLockScene(uint32_t t) {
+// JP logo + padlock on a lit background.
+// shift: px the whole group is pushed right. lift: shackle raise in px.
+void drawPadlockScene(int16_t shift, int16_t lift, bool flash) {
   const int16_t GAP = 12, BODY_W = 26, BODY_H = 20;
-  const int16_t lx = (128 - (JP_W + GAP + BODY_W)) / 2;
+  const int16_t lx = (128 - (JP_W + GAP + BODY_W)) / 2 + shift;
   const int16_t bx = lx + JP_W + GAP, by = 43;
-  const int16_t LIFT_MAX = 10;
-
-  int16_t lift = LIFT_MAX;
-  if (t >= 800) lift = 0;
-  else if (t >= 400) {
-    float p = (t - 400) / 400.0;
-    lift = LIFT_MAX * (1 - p * p);  // accelerate like it's falling
-  }
-  bool flash = (t >= 800 && t < 950);
   uint16_t bg = flash ? SSD1306_BLACK : SSD1306_WHITE;
   uint16_t fg = flash ? SSD1306_WHITE : SSD1306_BLACK;
 
   display.fillRect(0, BLUE_Y, 128, BLUE_H, bg);
   display.drawBitmap(lx, LOGO_Y, JP_BMP, JP_W, JP_H, fg);
-
   // Shackle: hollow U, legs hidden in the body when closed
   int16_t sx = bx + 3, sy = by - 16 - lift;
   display.fillRoundRect(sx, sy, 20, 22, 10, fg);
@@ -152,6 +147,35 @@ void drawLockScene(uint32_t t) {
   display.fillRoundRect(bx, by, BODY_W, BODY_H, 3, fg);
   display.fillCircle(bx + 13, by + 7, 3, bg);
   display.fillRect(bx + 12, by + 8, 3, 7, bg);
+}
+
+const int16_t LIFT_MAX = 10;
+
+// Closed. 0-500 ms: slides in from the right, shackle open.
+// 500-900: pause. 900-1300: shackle drops. 1300-1450: click flash.
+void drawLockAnim(uint32_t t) {
+  int16_t shift = 0, lift = LIFT_MAX;
+  if (t < 500) {
+    float p = 1 - t / 500.0;
+    shift = 128 * p * p;            // ease out
+  }
+  if (t >= 1300) lift = 0;
+  else if (t >= 900) {
+    float p = (t - 900) / 400.0;
+    lift = LIFT_MAX * (1 - p * p);  // accelerate like it's falling
+  }
+  drawPadlockScene(shift, lift, t >= 1300 && t < 1450);
+}
+
+// Open. 0-400 ms: locked. 400-700: shackle pops up with a flash.
+void drawUnlockAnim(uint32_t t) {
+  int16_t lift = 0;
+  if (t >= 700) lift = LIFT_MAX;
+  else if (t >= 400) {
+    float p = 1 - (t - 400) / 300.0;
+    lift = LIFT_MAX * (1 - p * p);  // fast then settle
+  }
+  drawPadlockScene(0, lift, t >= 400 && t < 550);
 }
 
 // Two lines of 12pt text; baselines fit cap height + descenders in rows 16-63.
@@ -188,10 +212,9 @@ void drawCompany() {
   display.setFont(NULL);
 }
 
-// Inverted logo: lit blue area with the logo cut out.
-void drawLogoInv() {
+void drawOpenMsg() {
   display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-  display.drawBitmap(LOGO_X, LOGO_Y, JP_BMP, JP_W, JP_H, SSD1306_BLACK);
+  drawMessage(&FreeSansBold12pt7b, OPEN_L1, OPEN_L2, 0, SSD1306_BLACK);
 }
 
 // Ordered dither: clear pixels above the current level so the area "fades".
@@ -202,37 +225,63 @@ void applyFade(uint8_t level) {
       if (BAYER[y & 3][x & 3] >= level) display.drawPixel(x, y, SSD1306_BLACK);
 }
 
+bool itemFades(uint8_t i) { return i == I_POLK; }
+
+uint16_t itemHoldMs(uint8_t i) {
+  switch (i) {
+    case I_LOCK: return LOCK_MS;
+    case I_MSG: return NEED_MS + SLIDE_MS + CALL_MS;
+    case I_POLK: return TEXT_HOLD_MS;
+    case I_UNLOCK: return UNLOCK_MS;
+    default: return OPEN_MSG_MS;
+  }
+}
+
+// Start the playlist for the current reed state from the top, no fade.
+void startPlaylist() {
+  listPos = 0;
+  item = isOpen() ? OPEN_LIST[0] : CLOSED_LIST[0];
+  fadeLevel = 16;
+  bPhase = B_HOLD;
+  bTimer = millis();
+}
+
+void nextItem() {
+  const uint8_t *list = isOpen() ? OPEN_LIST : CLOSED_LIST;
+  uint8_t n = isOpen() ? sizeof(OPEN_LIST) : sizeof(CLOSED_LIST);
+  listPos = (listPos + 1) % n;
+  item = list[listPos];
+}
+
 void drawBlue() {
   display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_BLACK);
   uint32_t now = millis();
+  uint32_t t = (bPhase == B_HOLD) ? now - bTimer : (bPhase == B_OUT ? 60000 : 0);
 
   if (bPhase != B_GAP) {
     switch (item) {
-      case I_LOGO: drawLogoInv(); break;
-      case I_LOCK: drawLockScene(bPhase == B_IN ? 0 : bPhase == B_HOLD ? now - bTimer : 60000); break;
-      case I_MSG: drawMsgScene(bPhase == B_HOLD ? now - bTimer : 0); break;
+      case I_LOCK: drawLockAnim(t); break;
+      case I_MSG: drawMsgScene(t); break;
       case I_POLK: drawCompany(); break;
+      case I_UNLOCK: drawUnlockAnim(t); break;
+      case I_OPENMSG: drawOpenMsg(); break;
     }
     applyFade(fadeLevel);
   }
 
   switch (bPhase) {
     case B_IN:
-      if (item == I_MSG) { fadeLevel = 16; bPhase = B_HOLD; bTimer = now; break; }  // cut in
+      if (!itemFades(item)) { fadeLevel = 16; bPhase = B_HOLD; bTimer = now; break; }  // cut in
       if (now - bTimer >= FADE_STEP_MS) {
         bTimer = now;
         if (++fadeLevel >= 16) bPhase = B_HOLD;
       }
       break;
     case B_HOLD:
-      if (now - bTimer >= (item == I_LOGO ? LOGO_HOLD_MS : item == I_LOCK ? LOCK_HOLD_MS :
-                         item == I_POLK ? TEXT_HOLD_MS : NEED_MS + SLIDE_MS + CALL_MS)) {
-        bPhase = B_OUT;
-        bTimer = now;
-      }
+      if (now - bTimer >= itemHoldMs(item)) { bPhase = B_OUT; bTimer = now; }
       break;
     case B_OUT:
-      if (item == I_MSG) { fadeLevel = 0; bPhase = B_GAP; break; }  // cut out
+      if (!itemFades(item)) { fadeLevel = 0; bPhase = B_GAP; bTimer = now; break; }  // cut out
       if (now - bTimer >= FADE_STEP_MS) {
         bTimer = now;
         if (fadeLevel == 0 || --fadeLevel == 0) bPhase = B_GAP;
@@ -240,7 +289,7 @@ void drawBlue() {
       break;
     case B_GAP:
       if (now - bTimer >= GAP_MS) {
-        item = (item + 1) % I_COUNT;
+        nextItem();
         fadeLevel = 0;
         bPhase = B_IN;
         bTimer = now;
@@ -269,7 +318,7 @@ void setup() {
   reedStable = reedLast = digitalRead(REED_PIN);
   digitalWrite(LED_PIN, reedStable);
   Serial.println(titleText());
-  bTimer = millis();
+  startPlaylist();
 }
 
 void loop() {
@@ -284,12 +333,7 @@ void loop() {
     digitalWrite(LED_PIN, reedStable);
     Serial.println(titleText());
     resetTitle();
-    if (reedStable == LOW) {  // closed: play the lock animation now
-      item = I_LOCK;
-      fadeLevel = 16;
-      bPhase = B_HOLD;
-      bTimer = millis();
-    }
+    startPlaylist();
   }
 
   if (millis() - lastFrame >= FRAME_MS) {
