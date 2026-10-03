@@ -9,8 +9,8 @@
 //              "A-1" holds 1 s -> "or"
 //           -> "Call Your Manager" slides in from the right
 //           -> "Polk Production Technologies" (fades) -> repeat.
-//   Open (inverted colors): "Close the Cage" -> JP unlock -> "CLOSE THE FUCKING CAGE"
-//           scrolls (24pt) -> JP unlock -> repeat.
+//   Open (inverted colors): "Close the Cage" -> JP unlock (shackle rises, wiggles)
+//           -> "CLOSE" / "THE" / "CAGE" one big word at a time -> JP unlock -> repeat.
 // On-board LED mirrors the reed: on = closed.
 // Libraries: Adafruit SSD1306, Adafruit GFX Library.
 #include <Wire.h>
@@ -34,7 +34,7 @@ const uint16_t FLASH_MS = 300;       // open: time per normal/inverted half
 // Blue area timing
 const uint16_t FADE_STEP_MS = 50;    // 16 steps each way (Polk only)
 const uint16_t LOCK_MS = 3000;       // closed JP lock animation, total
-const uint16_t UNLOCK_MS = 2000;     // open JP unlock animation, total
+const uint16_t UNLOCK_MS = 2200;     // open JP unlock animation, total
 const uint16_t NEED_MS = 2000;       // "Need something?" on screen
 const uint16_t GET_SCROLL_MS = 1720; // "Get A-1" scrolls until "Get" is off-screen
 const uint16_t A1_MS = 1000;         // "A-1" alone after "Get" leaves
@@ -49,9 +49,8 @@ const uint16_t GAP_MS = 300;         // blank between screens
 // Open message (two lines, FreeSans Bold 12pt, max ~128 px each)
 const char OPEN_L1[] = "Close the";
 const char OPEN_L2[] = "Cage";
-const char OPEN_SCROLL[] = "CLOSE THE FUCKING CAGE";
-const int16_t OPEN_SCROLL_W = 649;   // px in FreeSans Bold 24pt
-const uint16_t OPEN_SCROLL_MS = 6500; // same speed as "Get A-1"
+const uint16_t WORD_MS = 700;        // "CLOSE" / "THE" / "CAGE" each
+const uint16_t LAST_WORD_MS = 1200;  // "CAGE" holds a bit longer
 
 const int16_t BAND_H = 16, BLUE_Y = 16, BLUE_H = 48;
 const int16_t LOGO_Y = BLUE_Y + (BLUE_H - JP_H) / 2;
@@ -70,9 +69,9 @@ uint32_t tTimer = 0;
 // Blue area: play the current playlist; Polk fades, everything else cuts.
 enum BluePhase { B_IN, B_HOLD, B_OUT, B_GAP };
 BluePhase bPhase = B_IN;
-enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENSCROLL };
+enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENWORDS };
 const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_POLK};
-const uint8_t OPEN_LIST[] = {I_OPENMSG, I_UNLOCK, I_OPENSCROLL, I_UNLOCK};
+const uint8_t OPEN_LIST[] = {I_OPENMSG, I_UNLOCK, I_OPENWORDS, I_UNLOCK};
 uint8_t listPos = 0;
 uint8_t item = I_LOCK;
 uint8_t fadeLevel = 0;               // 0 = blank, 16 = fully drawn
@@ -140,7 +139,9 @@ void printCentered(const char *s, int16_t baseline, int16_t xoff = 0) {
 
 // JP logo + padlock on a lit background.
 // shift: px the whole group is pushed right. lift: shackle raise in px.
-void drawPadlockScene(int16_t shift, int16_t lift, int16_t shakeX, int16_t shakeY) {
+// shakeX/Y move the whole padlock; wigX/Y move only the shackle.
+void drawPadlockScene(int16_t shift, int16_t lift, int16_t shakeX, int16_t shakeY,
+                      int16_t wigX = 0, int16_t wigY = 0) {
   const int16_t GAP = 12, BODY_W = 26, BODY_H = 20;
   const int16_t lx = (128 - (JP_W + GAP + BODY_W)) / 2 + shift;
   const int16_t bx = lx + JP_W + GAP + shakeX, by = 43 + shakeY;
@@ -149,7 +150,7 @@ void drawPadlockScene(int16_t shift, int16_t lift, int16_t shakeX, int16_t shake
   display.fillRect(0, BLUE_Y, 128, BLUE_H, bg);
   display.drawBitmap(lx, LOGO_Y, JP_BMP, JP_W, JP_H, fg);
   // Shackle: hollow U, legs hidden in the body when closed
-  int16_t sx = bx + 3, sy = by - 16 - lift;
+  int16_t sx = bx + 3 + wigX, sy = by - 16 - lift + wigY;
   display.fillRoundRect(sx, sy, 20, 22, 10, fg);
   display.fillRoundRect(sx + 4, sy + 4, 12, 22, 6, bg);
   // Body + keyhole
@@ -184,15 +185,22 @@ void drawLockAnim(uint32_t t) {
   drawPadlockScene(shift, lift, sx, sy);
 }
 
-// Open. 0-400 ms: locked. 400-700: shackle pops up.
+// Open. 0-400 ms: locked. 400-700: shackle rises. 700-1240: shackle wiggles at the top.
 void drawUnlockAnim(uint32_t t) {
-  int16_t lift = 0;
+  int16_t lift = 0, wx = 0, wy = 0;
   if (t >= 700) lift = LIFT_MAX;
   else if (t >= 400) {
     float p = 1 - (t - 400) / 300.0;
     lift = LIFT_MAX * (1 - p * p);  // fast then settle
   }
-  drawPadlockScene(0, lift, 0, 0);
+  if (t >= 700 && t < 1240) {
+    static const int8_t WX[] = {2, -2, 2, -2, 2, -2, 1, -1, 1, -1, 0, 0};
+    static const int8_t WY[] = {-1, 0, -1, 0, -1, 0, -1, 0, 0, 0, 0, 0};
+    uint32_t i = min((uint32_t)11, (t - 700) / 45);
+    wx = WX[i];
+    wy = WY[i];
+  }
+  drawPadlockScene(0, lift, 0, 0, wx, wy);
 }
 
 // Two lines of 12pt text; baselines fit cap height + descenders in rows 16-63.
@@ -215,16 +223,32 @@ void drawBig(const char *s, int16_t baseline) {
   display.setFont(NULL);
 }
 
-// One line of 24pt text scrolled right to left across the blue area.
-void drawScroll24(const char *s, int16_t w, uint32_t t, uint16_t dur, bool inv) {
-  int16_t x = 128 - (int16_t)((uint32_t)(128 + w) * t / dur);
-  if (inv) display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-  display.setFont(&FreeSansBold24pt7b);
+// One word, centered, black on a lit area. track = extra px between letters
+// (negative squeezes). Baseline centers the cap height in rows 16-63.
+void drawWord(const char *w, const GFXfont *font, int8_t track, int16_t cap) {
+  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
+  display.setFont(font);
   display.setTextSize(1);
-  display.setTextColor(inv ? SSD1306_BLACK : SSD1306_WHITE);
-  display.setCursor(x, 57);  // 34 px cap height centered in rows 16-63
-  display.print(s);
+  display.setTextColor(SSD1306_BLACK);
+  int16_t x1, y1;
+  uint16_t bw, bh;
+  int16_t base = BLUE_Y + (BLUE_H - cap) / 2 + cap;
+  display.getTextBounds(w, 0, base, &x1, &y1, &bw, &bh);
+  int16_t width = bw + track * ((int16_t)strlen(w) - 1);
+  display.setCursor((128 - width) / 2 - x1, base);
+  for (const char *c = w; *c; c++) {
+    display.print(*c);
+    display.setCursor(display.getCursorX() + track, base);
+  }
   display.setFont(NULL);
+}
+
+// "CLOSE" / "THE" / "CAGE", each as big as fits 128 px:
+// CLOSE is 161 px in 24pt so it gets 18pt; CAGE is 132 px in 24pt, squeezed 2 px.
+void drawOpenWords(uint32_t t) {
+  if (t < WORD_MS) drawWord("CLOSE", &FreeSansBold18pt7b, 0, 25);
+  else if (t < 2 * WORD_MS) drawWord("THE", &FreeSansBold24pt7b, 0, 34);
+  else drawWord("CAGE", &FreeSansBold24pt7b, -2, 34);
 }
 
 // "Need something?" -> "Get A-1" -> "or" -> inverted "Call Your Manager"
@@ -290,7 +314,7 @@ uint16_t itemHoldMs(uint8_t i) {
     case I_MSG: return NEED_MS + GET_MS + OR_MS + SLIDE_MS + CALL_MS;
     case I_POLK: return TEXT_HOLD_MS;
     case I_UNLOCK: return UNLOCK_MS;
-    case I_OPENSCROLL: return OPEN_SCROLL_MS;
+    case I_OPENWORDS: return 2 * WORD_MS + LAST_WORD_MS;
     default: return OPEN_MSG_MS;
   }
 }
@@ -324,7 +348,7 @@ void drawBlue() {
       case I_POLK: drawCompany(); break;
       case I_UNLOCK: drawUnlockAnim(t); break;
       case I_OPENMSG: drawOpenMsg(); break;
-      case I_OPENSCROLL: drawScroll24(OPEN_SCROLL, OPEN_SCROLL_W, t, OPEN_SCROLL_MS, true); break;
+      case I_OPENWORDS: drawOpenWords(t); break;
     }
     applyFade(fadeLevel);
   }
