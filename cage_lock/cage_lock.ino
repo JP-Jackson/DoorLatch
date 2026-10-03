@@ -4,8 +4,9 @@
 //                inverted for the next, alternating.
 //   Reed open:   "Cage OPEN" centered, flashing normal <-> inverted.
 // Blue area (rows 16-63) runs one of two playlists, restarting on reed change:
-//   Closed: JP + padlock slides in from the right, locks, padlock shakes
-//           -> "Need something?" -> "Get A-1" scrolls (24pt) -> "or"
+//   Closed: JP + padlock slides in from the right, locks, padlock rattles (x and y)
+//           -> "Need something?" -> "Get A-1" scrolls in (24pt) until "Get" is off,
+//              "A-1" holds a split second -> "or"
 //           -> "Call Your Manager" slides in from the right
 //           -> "Polk Production Technologies" (fades) -> repeat.
 //   Open (inverted colors): "Close the Cage" -> JP unlock -> "CLOSE THE FUCKING CAGE"
@@ -35,7 +36,9 @@ const uint16_t FADE_STEP_MS = 50;    // 16 steps each way (Polk only)
 const uint16_t LOCK_MS = 3000;       // closed JP lock animation, total
 const uint16_t UNLOCK_MS = 2000;     // open JP unlock animation, total
 const uint16_t NEED_MS = 2000;       // "Need something?" on screen
-const uint16_t GET_MS = 2400;        // "Get A-1" scroll across, total
+const uint16_t GET_SCROLL_MS = 1600; // "Get A-1" scrolls until "Get" is off-screen
+const uint16_t A1_MS = 350;          // "A-1" alone, centered
+const uint16_t GET_MS = GET_SCROLL_MS + A1_MS;
 const uint16_t OR_MS = 700;          // "or" on screen
 const uint16_t SLIDE_MS = 400;       // "Call Your Manager" slide-in
 const uint16_t CALL_MS = 2000;       // "Call Your Manager" on screen
@@ -137,10 +140,10 @@ void printCentered(const char *s, int16_t baseline, int16_t xoff = 0) {
 
 // JP logo + padlock on a lit background.
 // shift: px the whole group is pushed right. lift: shackle raise in px.
-void drawPadlockScene(int16_t shift, int16_t lift, int16_t shake) {
+void drawPadlockScene(int16_t shift, int16_t lift, int16_t shakeX, int16_t shakeY) {
   const int16_t GAP = 12, BODY_W = 26, BODY_H = 20;
   const int16_t lx = (128 - (JP_W + GAP + BODY_W)) / 2 + shift;
-  const int16_t bx = lx + JP_W + GAP + shake, by = 43;
+  const int16_t bx = lx + JP_W + GAP + shakeX, by = 43 + shakeY;
   const uint16_t bg = SSD1306_WHITE, fg = SSD1306_BLACK;
 
   display.fillRect(0, BLUE_Y, 128, BLUE_H, bg);
@@ -158,9 +161,9 @@ void drawPadlockScene(int16_t shift, int16_t lift, int16_t shake) {
 const int16_t LIFT_MAX = 10;
 
 // Closed. 0-500 ms: slides in from the right, shackle open.
-// 500-900: pause. 900-1300: shackle drops. 1300-1700: padlock shakes.
+// 500-900: pause. 900-1300: shackle drops. 1300-1705: padlock rattles.
 void drawLockAnim(uint32_t t) {
-  int16_t shift = 0, lift = LIFT_MAX, shake = 0;
+  int16_t shift = 0, lift = LIFT_MAX, sx = 0, sy = 0;
   if (t < 500) {
     float p = 1 - t / 500.0;
     shift = 128 * p * p;            // ease out
@@ -170,11 +173,15 @@ void drawLockAnim(uint32_t t) {
     float p = (t - 900) / 400.0;
     lift = LIFT_MAX * (1 - p * p);  // accelerate like it's falling
   }
-  if (t >= 1300 && t < 1700) {
-    static const int8_t SHAKE[] = {3, -3, 2, -2, 1, -1, 0};
-    shake = SHAKE[min((uint32_t)6, (t - 1300) / 60)];
+  if (t >= 1300 && t < 1705) {
+    // left/right and up/down, dying out
+    static const int8_t SX[] = {3, 0, -3, 0, 2, 0, -2, 0, 0};
+    static const int8_t SY[] = {0, -2, 0, 2, 0, -1, 0, 1, 0};
+    uint32_t i = min((uint32_t)8, (t - 1300) / 45);
+    sx = SX[i];
+    sy = SY[i];
   }
-  drawPadlockScene(shift, lift, shake);
+  drawPadlockScene(shift, lift, sx, sy);
 }
 
 // Open. 0-400 ms: locked. 400-700: shackle pops up.
@@ -185,7 +192,7 @@ void drawUnlockAnim(uint32_t t) {
     float p = 1 - (t - 400) / 300.0;
     lift = LIFT_MAX * (1 - p * p);  // fast then settle
   }
-  drawPadlockScene(0, lift, 0);
+  drawPadlockScene(0, lift, 0, 0);
 }
 
 // Two lines of 12pt text; baselines fit cap height + descenders in rows 16-63.
@@ -229,7 +236,15 @@ void drawMsgScene(uint32_t t) {
   }
   t -= NEED_MS;
   if (t < GET_MS) {
-    drawScroll24("Get A-1", 159, t, GET_MS, false);
+    // "Get " advance is 92 px, "A-1" is 67 px: stop with "A-1" centered.
+    const int16_t STOP_X = (128 - 67) / 2 - 92;
+    int16_t x = (t < GET_SCROLL_MS) ? 128 - (int16_t)((128 - STOP_X) * t / GET_SCROLL_MS) : STOP_X;
+    display.setFont(&FreeSansBold24pt7b);
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(x, 57);
+    display.print("Get A-1");
+    display.setFont(NULL);
     return;
   }
   t -= GET_MS;
