@@ -37,7 +37,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 docs/wiring.html          wiring page (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse
-tests/oled_test/          splash + uptime counter
+tests/oled_test/          "Cage Lock" title, JP icon, LOCKED/UNLOCKED from D6
 tests/reed_test/          prints OPEN/CLOSED, on-board LED mirrors state
 secrets.h.example         copy to secrets.h (gitignored) for WiFi creds
 ```
