@@ -1,15 +1,15 @@
 // Cage Lock main sketch.
-// Yellow band (rows 0-15): "Cage Closed" (reed closed) / "Cage Open" (reed open).
-//   Scrolls across once, then blinks centered, repeat.
-//   Closed: text on dark band. Open: inverted, solid yellow band with text cut out.
-// Blue area (rows 16-63): JP logo fades in, holds, fades out, then
-//   "Polk Production Technologies, Inc." fades in, holds, fades out, repeat.
+// Yellow band (rows 0-15):
+//   Reed closed: "Cage Closed" scrolls continuously.
+//   Reed open:   "Cage OPEN" centered, flashing normal <-> inverted.
+// Blue area (rows 16-63): inverted JP logo fades in, holds, fades out, then
+//   "Polk Production Technologies" fades in, holds, fades out, repeat.
 // On-board LED mirrors the reed: on = closed.
 // Libraries: Adafruit SSD1306, Adafruit GFX Library.
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <Fonts/FreeSans9pt7b.h>
+#include <Fonts/FreeSansBold9pt7b.h>
 #include "logo.h"
 
 const uint8_t REED_PIN = D7;         // window reed to GND, LOW = closed
@@ -19,8 +19,7 @@ const uint16_t DEBOUNCE_MS = 50;
 
 // Title timing
 const uint8_t SCROLL_PX = 2;         // px per frame
-const uint16_t BLINK_MS = 300;       // per on/off half
-const uint8_t BLINKS = 3;            // full on/off cycles
+const uint16_t FLASH_MS = 300;       // open: time per normal/inverted half
 
 // Logo timing
 const uint16_t FADE_STEP_MS = 50;    // 16 steps each way
@@ -39,10 +38,8 @@ Adafruit_SSD1306 display(128, 64, &Wire, -1);
 int reedStable = -1, reedLast = -1;
 uint32_t reedChange = 0, lastFrame = 0;
 
-enum TitlePhase { T_SCROLL, T_BLINK };
-TitlePhase tPhase = T_SCROLL;
 int16_t scrollX = 128;
-uint8_t blinkHalf = 0;
+bool flashInv = false;
 uint32_t tTimer = 0;
 
 // Blue area cycle: each item fades in, holds, fades out, then a short gap.
@@ -53,7 +50,7 @@ uint8_t fadeLevel = 0;               // 0 = blank, 16 = fully drawn
 uint32_t bTimer = 0;
 
 bool isOpen() { return reedStable == HIGH; }
-const char *titleText() { return isOpen() ? "Cage Open" : "Cage Closed"; }
+const char *titleText() { return isOpen() ? "Cage OPEN" : "Cage Closed"; }
 
 // Size-2 text with a narrow 8 px space so "Cage Closed" fits in 128 px.
 int16_t titleWidth(const char *s) {
@@ -76,36 +73,31 @@ void printTitle(const char *s, int16_t x, uint16_t color) {
 // ---------- yellow band ----------
 
 void resetTitle() {
-  tPhase = T_SCROLL;
   scrollX = 128;
+  flashInv = false;
+  tTimer = millis();
 }
 
 void drawTitle() {
   const char *t = titleText();
   int16_t w = titleWidth(t);
-  bool open = isOpen();
-  // Open: solid yellow band, text cut out. Closed: text on dark band.
-  uint16_t bg = open ? SSD1306_WHITE : SSD1306_BLACK;
-  uint16_t fg = open ? SSD1306_BLACK : SSD1306_WHITE;
   display.setFont(NULL);
-  display.fillRect(0, 0, 128, BAND_H, bg);
 
-  if (tPhase == T_SCROLL) {
-    printTitle(t, scrollX, fg);
+  if (!isOpen()) {
+    // Closed: continuous scroll
+    display.fillRect(0, 0, 128, BAND_H, SSD1306_BLACK);
+    printTitle(t, scrollX, SSD1306_WHITE);
     scrollX -= SCROLL_PX;
-    if (scrollX < -w) {
-      tPhase = T_BLINK;
-      blinkHalf = 0;
-      tTimer = millis();
-    }
+    if (scrollX < -w) scrollX = 128;
     return;
   }
 
-  // T_BLINK: text on for even halves, off (band only) for odd
-  if (blinkHalf % 2 == 0) printTitle(t, (128 - w) / 2, fg);
-  if (millis() - tTimer >= BLINK_MS) {
+  // Open: centered, flash between normal and inverted
+  display.fillRect(0, 0, 128, BAND_H, flashInv ? SSD1306_WHITE : SSD1306_BLACK);
+  printTitle(t, (128 - w) / 2, flashInv ? SSD1306_BLACK : SSD1306_WHITE);
+  if (millis() - tTimer >= FLASH_MS) {
     tTimer = millis();
-    if (++blinkHalf >= BLINKS * 2) resetTitle();
+    flashInv = !flashInv;
   }
 }
 
@@ -120,14 +112,21 @@ void printCentered(const char *s, int16_t baseline) {
 }
 
 void drawCompany() {
-  // FreeSans 9pt: largest size where the full name fits the 128x48 area
-  display.setFont(&FreeSans9pt7b);
+  // FreeSans Bold 9pt is the largest font where "Technologies" fits 128 px.
+  // Baselines leave room for the "g" descender on the last line.
+  display.setFont(&FreeSansBold9pt7b);
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  printCentered("Polk Production", 28);
-  printCentered("Technologies,", 43);
-  printCentered("Inc.", 61);
+  printCentered("Polk", 28);
+  printCentered("Production", 43);
+  printCentered("Technologies", 58);
   display.setFont(NULL);
+}
+
+// Inverted logo: lit blue area with the logo cut out.
+void drawLogoInv() {
+  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
+  display.drawBitmap(LOGO_X, LOGO_Y, JP_BMP, JP_W, JP_H, SSD1306_BLACK);
 }
 
 // Ordered dither: clear pixels above the current level so the area "fades".
@@ -143,7 +142,7 @@ void drawBlue() {
   uint32_t now = millis();
 
   if (bPhase != B_GAP) {
-    if (showLogo) display.drawBitmap(LOGO_X, LOGO_Y, JP_BMP, JP_W, JP_H, SSD1306_WHITE);
+    if (showLogo) drawLogoInv();
     else drawCompany();
     applyFade(fadeLevel);
   }
