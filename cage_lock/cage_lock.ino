@@ -2,14 +2,17 @@
 // Yellow band (rows 0-15):
 //   Reed closed: "Cage Closed" scrolls continuously.
 //   Reed open:   "Cage OPEN" centered, flashing normal <-> inverted.
-// Blue area (rows 16-63): inverted JP logo fades in, holds, fades out, then
-//   "Polk Production Technologies" fades in, holds, fades out, repeat.
+// Blue area (rows 16-63): each screen fades in, holds, fades out, in order:
+//   inverted JP logo -> "Need something?" -> "Call your Manager"
+//   -> "Polk Production Technologies" -> repeat.
 // On-board LED mirrors the reed: on = closed.
 // Libraries: Adafruit SSD1306, Adafruit GFX Library.
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Fonts/FreeSansBold9pt7b.h>
+#include <Fonts/FreeSans12pt7b.h>
+#include <Fonts/FreeSansBold12pt7b.h>
 #include "logo.h"
 
 const uint8_t REED_PIN = D7;         // window reed to GND, LOW = closed
@@ -24,7 +27,8 @@ const uint16_t FLASH_MS = 300;       // open: time per normal/inverted half
 // Logo timing
 const uint16_t FADE_STEP_MS = 50;    // 16 steps each way
 const uint16_t LOGO_HOLD_MS = 1000;
-const uint16_t TEXT_HOLD_MS = 3000;
+const uint16_t MSG_HOLD_MS = 2000;   // "Need something?" / "Call your Manager"
+const uint16_t TEXT_HOLD_MS = 3000;  // company name
 const uint16_t GAP_MS = 300;         // blank between fades
 
 const int16_t BAND_H = 16, BLUE_Y = 16, BLUE_H = 48;
@@ -45,7 +49,8 @@ uint32_t tTimer = 0;
 // Blue area cycle: each item fades in, holds, fades out, then a short gap.
 enum BluePhase { B_IN, B_HOLD, B_OUT, B_GAP };
 BluePhase bPhase = B_IN;
-bool showLogo = true;                // false = company text
+enum BlueItem { I_LOGO, I_NEED, I_CALL, I_POLK, I_COUNT };
+uint8_t item = I_LOGO;
 uint8_t fadeLevel = 0;               // 0 = blank, 16 = fully drawn
 uint32_t bTimer = 0;
 
@@ -111,6 +116,16 @@ void printCentered(const char *s, int16_t baseline) {
   display.print(s);
 }
 
+// Two lines of 12pt text; baselines fit cap height + descenders in rows 16-63.
+void drawMessage(const GFXfont *font, const char *l1, const char *l2) {
+  display.setFont(font);
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  printCentered(l1, 33);
+  printCentered(l2, 57);
+  display.setFont(NULL);
+}
+
 void drawCompany() {
   // FreeSans Bold 9pt is the largest font where "Technologies" fits 128 px.
   // Baselines leave room for the "g" descender on the last line.
@@ -142,8 +157,12 @@ void drawBlue() {
   uint32_t now = millis();
 
   if (bPhase != B_GAP) {
-    if (showLogo) drawLogoInv();
-    else drawCompany();
+    switch (item) {
+      case I_LOGO: drawLogoInv(); break;
+      case I_NEED: drawMessage(&FreeSans12pt7b, "Need", "something?"); break;
+      case I_CALL: drawMessage(&FreeSansBold12pt7b, "Call your", "Manager"); break;
+      case I_POLK: drawCompany(); break;
+    }
     applyFade(fadeLevel);
   }
 
@@ -155,7 +174,10 @@ void drawBlue() {
       }
       break;
     case B_HOLD:
-      if (now - bTimer >= (showLogo ? LOGO_HOLD_MS : TEXT_HOLD_MS)) { bPhase = B_OUT; bTimer = now; }
+      if (now - bTimer >= (item == I_LOGO ? LOGO_HOLD_MS : item == I_POLK ? TEXT_HOLD_MS : MSG_HOLD_MS)) {
+        bPhase = B_OUT;
+        bTimer = now;
+      }
       break;
     case B_OUT:
       if (now - bTimer >= FADE_STEP_MS) {
@@ -165,7 +187,7 @@ void drawBlue() {
       break;
     case B_GAP:
       if (now - bTimer >= GAP_MS) {
-        showLogo = !showLogo;
+        item = (item + 1) % I_COUNT;
         fadeLevel = 0;
         bPhase = B_IN;
         bTimer = now;
