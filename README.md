@@ -34,6 +34,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 ## Layout
 
 ```
+cage_lock/                main sketch: boot animation + credit, lock title scroll, window OPEN/CLOSED, LED = reed
 docs/wiring.html          wiring page (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse
