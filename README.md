@@ -1,6 +1,6 @@
-# DoorLatch
+# Cage Lock
 
-ESP8266 (HiLetgo NodeMCU, CP2102) door lock controller: 12V pulse-type cabinet lock via relay, OLED status, buzzer, window reed switch and lock status switch.
+ESP8266 (HiLetgo NodeMCU, CP2102) Cage Lock controller: 12V pulse-type cabinet lock via relay, OLED status, buzzer, window reed switch and lock status switch.
 
 Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a browser).
 
@@ -37,7 +37,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 docs/wiring.html          wiring page (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse
-tests/oled_test/          "Cage Lock" title, JP icon, LOCKED/UNLOCKED from D6
+tests/oled_test/          scrolling "Cage Locked/Unlocked" title (D6) + JP logo
 tests/reed_test/          prints OPEN/CLOSED, on-board LED mirrors state
 secrets.h.example         copy to secrets.h (gitignored) for WiFi creds
 ```
