@@ -1,0 +1,13 @@
+# Secrets (WiFi creds, tokens)
+secrets.h
+**/secrets.h
+
+# Build output
+build/
+*.bin
+*.elf
+*.hex
+
+# Editor / OS
+.vscode/
+.DS_Store

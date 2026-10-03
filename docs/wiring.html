@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Door lock wiring</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EDF0F1; --card:#FFFFFF; --ink:#1D2830; --muted:#5B6870; --line:#CDD4D8;
+  --accent:#1F6B4A; --accent-ink:#FFFFFF; --pcb:#1F6B4A;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#151B1F; --card:#1E262B; --ink:#E4EAED; --muted:#98A5AC; --line:#34414A;
+    --accent:#4FB386; --accent-ink:#0E1A14;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#151B1F; --card:#1E262B; --ink:#E4EAED; --muted:#98A5AC; --line:#34414A;
+  --accent:#4FB386; --accent-ink:#0E1A14;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.55}
+main{max-width:860px;margin:0 auto;padding:28px 18px 48px}
+h1{font-size:1.9rem;font-weight:600;letter-spacing:-0.01em;margin:0 0 6px}
+h2{font-size:1.25rem;font-weight:600;margin:40px 0 8px}
+p.lede{color:var(--muted);margin:0 0 22px;max-width:62ch}
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.controls button{font:500 0.95rem "IBM Plex Sans Condensed","IBM Plex Sans",sans-serif;
+  padding:9px 16px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+.controls button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.controls button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.swatch{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:1px}
+.figure{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;overflow-x:auto}
+.figure svg{display:block;width:100%;min-width:620px;height:auto}
+.layer{transition:opacity .2s ease}
+@media (prefers-reduced-motion: reduce){.layer{transition:none}}
+.tbl-wrap{overflow-x:auto;margin-top:14px}
+table{width:100%;border-collapse:collapse;font-size:0.95rem}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:500;color:var(--muted);font-family:"IBM Plex Sans Condensed","IBM Plex Sans",sans-serif}
+td.note{color:var(--muted)}
+.svg-ink{fill:var(--ink)} .svg-muted{fill:var(--muted)}
+.wire-ink{stroke:var(--ink)}
+.legend{color:var(--muted);font-size:0.9rem;margin-top:10px}
+</style>
+</head>
+<body>
+<main>
+<h1>Door lock wiring</h1>
+<p class="lede">Breadboard layout for the NodeMCU, buzzer, relay, OLED screen and window reed switch. Pick a part to see only its wires. The ground jumper from j29 to the − rail is shown in every view, since everything shares it.</p>
+
+<div class="controls" role="group" aria-label="Show connections">
+  <button type="button" data-layer="all" aria-pressed="true">All</button>
+  <button type="button" data-layer="buzzer" aria-pressed="false"><span class="swatch" style="background:#D85A30"></span>Buzzer</button>
+  <button type="button" data-layer="relay" aria-pressed="false"><span class="swatch" style="background:#7F77DD"></span>Relay</button>
+  <button type="button" data-layer="oled" aria-pressed="false"><span class="swatch" style="background:#1D9E75"></span>Screen</button>
+  <button type="button" data-layer="reed" aria-pressed="false"><span class="swatch" style="background:#639922"></span>Reed switch</button>
+</div>
+
+<div class="figure">
+<svg viewBox="0 -6 640 620" role="img" aria-labelledby="bbTitle">
+<title id="bbTitle">Breadboard wiring view</title>
+<!-- board -->
+<rect x="20" y="22" width="330" height="440" rx="6" fill="#FAFAF7" stroke="#C9CBC4"/>
+<line x1="30" y1="34" x2="30" y2="452" stroke="#E24B4A" stroke-width="0.8"/>
+<line x1="56" y1="34" x2="56" y2="452" stroke="#378ADD" stroke-width="0.8"/>
+<line x1="296" y1="34" x2="296" y2="452" stroke="#E24B4A" stroke-width="0.8"/>
+<line x1="340" y1="34" x2="340" y2="452" stroke="#378ADD" stroke-width="0.8"/>
+<g stroke="#C9CBC4" stroke-width="6" stroke-dasharray="6 8">
+  <line x1="38" y1="37" x2="38" y2="452"/><line x1="48" y1="37" x2="48" y2="452"/>
+  <line x1="90" y1="37" x2="90" y2="452"/><line x1="108" y1="37" x2="108" y2="452"/><line x1="126" y1="37" x2="126" y2="452"/><line x1="144" y1="37" x2="144" y2="452"/><line x1="162" y1="37" x2="162" y2="452"/>
+  <line x1="198" y1="37" x2="198" y2="452"/><line x1="216" y1="37" x2="216" y2="452"/><line x1="234" y1="37" x2="234" y2="452"/><line x1="252" y1="37" x2="252" y2="452"/><line x1="270" y1="37" x2="270" y2="452"/>
+  <line x1="308" y1="37" x2="308" y2="452"/><line x1="328" y1="37" x2="328" y2="452"/>
+</g>
+<g font-family="IBM Plex Sans Condensed, sans-serif" font-size="11" class="svg-muted" text-anchor="middle">
+  <text x="90" y="12">a</text><text x="108" y="12">b</text><text x="126" y="12">c</text><text x="144" y="12">d</text><text x="162" y="12">e</text>
+  <text x="198" y="12">f</text><text x="216" y="12">g</text><text x="234" y="12">h</text><text x="252" y="12">i</text><text x="270" y="12">j</text>
+  <text x="38" y="12">+</text><text x="48" y="12">−</text><text x="308" y="12">+</text><text x="328" y="12">−</text>
+</g>
+<g font-family="IBM Plex Sans Condensed, sans-serif" font-size="10" fill="#8A8D86" text-anchor="end">
+  <text x="80" y="43">1</text><text x="80" y="99">5</text><text x="80" y="169">10</text><text x="80" y="239">15</text><text x="80" y="309">20</text><text x="80" y="379">25</text><text x="74" y="449">30</text>
+</g>
+<!-- NodeMCU -->
+<rect x="99" y="201" width="163" height="254" rx="6" fill="#26292B"/>
+<g stroke="#8A8D86" stroke-width="6" stroke-dasharray="6 8"><line x1="108" y1="247" x2="108" y2="452"/><line x1="252" y1="247" x2="252" y2="452"/></g>
+<text x="180" y="226" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="500" fill="#F1EFE8">NodeMCU</text>
+<g font-family="IBM Plex Sans Condensed, sans-serif" font-size="9.5" fill="#E8E6DF" text-anchor="end">
+  <text x="244" y="253">D0</text><text x="244" y="267">D1</text><text x="244" y="281">D2</text><text x="244" y="295">D3</text><text x="244" y="309">D4</text><text x="244" y="323">3V3</text><text x="244" y="337">GND</text><text x="244" y="351">D5</text><text x="244" y="365">D6</text><text x="244" y="379">D7</text><text x="244" y="393">D8</text><text x="244" y="407">RX</text><text x="244" y="421">TX</text><text x="244" y="435">GND</text><text x="244" y="449">3V3</text>
+</g>
+<g font-family="IBM Plex Sans Condensed, sans-serif" font-size="9.5" fill="#E8E6DF">
+  <text x="118" y="253">A0</text><text x="118" y="267">RSV</text><text x="118" y="281">RSV</text><text x="118" y="295">SD3</text><text x="118" y="309">SD2</text><text x="118" y="323">SD1</text><text x="118" y="337">CMD</text><text x="118" y="351">SD0</text><text x="118" y="365">CLK</text><text x="118" y="379">GND</text><text x="118" y="393">3V3</text><text x="118" y="407">EN</text><text x="118" y="421">RST</text><text x="118" y="435">GND</text><text x="118" y="449">Vin</text>
+</g>
+
+<!-- shared ground: always shown -->
+<g id="layer-ground">
+  <path d="M270 432 Q299 410 328 432" fill="none" stroke="#378ADD" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="270" cy="432" r="4" fill="#378ADD"/><circle cx="328" cy="432" r="4" fill="#378ADD"/>
+</g>
+
+<!-- buzzer -->
+<g id="layer-buzzer" class="layer">
+  <path d="M270 390 C360 340, 360 210, 270 166" fill="none" stroke="#D85A30" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="270" cy="390" r="4" fill="#D85A30"/><circle cx="270" cy="166" r="4" fill="#D85A30"/>
+  <line x1="216" y1="110" x2="216" y2="124" stroke="#8A8D86" stroke-width="2"/><line x1="216" y1="152" x2="216" y2="166" stroke="#8A8D86" stroke-width="2"/>
+  <rect x="209" y="124" width="14" height="28" rx="3" fill="#85B7EB"/>
+  <g stroke-width="2"><line x1="209" y1="129" x2="223" y2="129" stroke="#993C1D"/><line x1="209" y1="134" x2="223" y2="134" stroke="#2C2C2A"/><line x1="209" y1="139" x2="223" y2="139" stroke="#2C2C2A"/><line x1="209" y1="144" x2="223" y2="144" stroke="#2C2C2A"/><line x1="209" y1="149" x2="223" y2="149" stroke="#993C1D"/></g>
+  <circle cx="234" cy="89" r="19" fill="#26292B"/>
+  <text x="234" y="102" text-anchor="middle" font-size="12" fill="#F1EFE8">+</text><text x="234" y="84" text-anchor="middle" font-size="12" fill="#F1EFE8">−</text>
+  <path d="M252 68 Q290 46 328 68" fill="none" stroke="#378ADD" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="252" cy="68" r="4" fill="#378ADD"/><circle cx="328" cy="68" r="4" fill="#378ADD"/>
+</g>
+
+<!-- relay -->
+<g id="layer-relay" class="layer">
+  <rect x="40" y="520" width="300" height="84" rx="6" fill="#26292B"/>
+  <g fill="#B4B2A9"><rect x="67" y="517" width="6" height="6"/><rect x="117" y="517" width="6" height="6"/><rect x="157" y="517" width="6" height="6"/><rect x="207" y="517" width="6" height="6"/><rect x="242" y="517" width="6" height="6"/><rect x="277" y="517" width="6" height="6"/><rect x="312" y="517" width="6" height="6"/></g>
+  <g font-family="IBM Plex Sans Condensed, sans-serif" font-size="11" text-anchor="middle">
+    <text x="70" y="541" fill="#F1EFE8">JD-VCC</text><text x="120" y="541" fill="#7C7B76">VCC</text><text x="160" y="541" fill="#F1EFE8">GND</text>
+    <text x="210" y="541" fill="#F1EFE8">GND</text><text x="245" y="541" fill="#F1EFE8">IN1</text><text x="280" y="541" fill="#7C7B76">IN2</text><text x="315" y="541" fill="#F1EFE8">VCC</text>
+    <text x="190" y="572" fill="#F1EFE8" font-size="12">2-relay module, jumper removed</text>
+    <text x="190" y="592" fill="#9C9A92">screw terminals NO1, COM1, NC1 are for the 12V lock later</text>
+  </g>
+  <path d="M90 446 C90 485, 70 485, 70 517" fill="none" stroke="#E24B4A" stroke-width="3" stroke-linecap="round"/><circle cx="90" cy="446" r="4" fill="#E24B4A"/>
+  <path d="M90 432 C125 440, 160 470, 160 517" fill="none" stroke="#378ADD" stroke-width="3" stroke-linecap="round"/><circle cx="90" cy="432" r="4" fill="#378ADD"/>
+  <path d="M210 517 C210 480, 328 490, 328 446" fill="none" stroke="#378ADD" stroke-width="3" stroke-linecap="round"/><circle cx="328" cy="446" r="4" fill="#378ADD"/>
+  <path d="M270 446 C270 485, 315 485, 315 517" fill="none" stroke="#EF9F27" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="446" r="4" fill="#EF9F27"/>
+  <path d="M270 348 C380 360, 370 500, 245 517" fill="none" stroke="#7F77DD" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="348" r="4" fill="#7F77DD"/>
+</g>
+
+<!-- OLED -->
+<g id="layer-oled" class="layer">
+  <rect x="430" y="240" width="180" height="110" rx="6" fill="#1C4E80"/>
+  <rect x="495" y="252" width="105" height="86" rx="3" fill="#0E1418"/>
+  <text x="547" y="300" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="#7FD3FF">OLED</text>
+  <g fill="#B4B2A9"><rect x="427" y="259" width="6" height="6"/><rect x="427" y="281" width="6" height="6"/><rect x="427" y="303" width="6" height="6"/><rect x="427" y="325" width="6" height="6"/></g>
+  <g font-family="IBM Plex Sans Condensed, sans-serif" font-size="10.5" fill="#DCE8F5">
+    <text x="442" y="266">SDA</text><text x="442" y="288">SCL</text><text x="442" y="310">VCC</text><text x="442" y="332">GND</text>
+  </g>
+  <path d="M270 264 C370 264, 370 284, 430 284" fill="none" stroke="#E0A030" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="264" r="4" fill="#E0A030"/>
+  <path d="M270 278 C370 278, 370 262, 430 262" fill="none" stroke="#1D9E75" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="278" r="4" fill="#1D9E75"/>
+  <path d="M270 320 C370 320, 370 306, 430 306" fill="none" stroke="#E24B4A" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="320" r="4" fill="#E24B4A"/>
+  <path d="M270 334 C370 334, 370 328, 430 328" fill="none" stroke="#378ADD" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="334" r="4" fill="#378ADD"/>
+</g>
+
+<!-- reed -->
+<g id="layer-reed" class="layer">
+  <text x="500" y="388" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="11" class="svg-muted">reed switch</text>
+  <rect x="460" y="399" width="80" height="22" rx="11" fill="none" stroke="#8A8D86" stroke-width="1.2"/>
+  <line x1="468" y1="411" x2="503" y2="408" stroke="#8A8D86" stroke-width="2"/><line x1="497" y1="413" x2="532" y2="410" stroke="#8A8D86" stroke-width="2"/>
+  <line x1="440" y1="410" x2="460" y2="410" stroke="#8A8D86" stroke-width="2"/><line x1="540" y1="410" x2="560" y2="410" stroke="#8A8D86" stroke-width="2"/>
+  <rect x="470" y="436" width="60" height="12" rx="2" fill="#D85A30"/>
+  <text x="500" y="464" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="10.5" class="svg-muted">magnet</text>
+  <path d="M270 376 C370 376, 380 410, 440 410" fill="none" stroke="#639922" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="376" r="4" fill="#639922"/><circle cx="440" cy="410" r="4" fill="#639922"/>
+  <path d="M560 410 C560 490, 328 480, 328 418" fill="none" stroke="#378ADD" stroke-width="3" stroke-linecap="round"/><circle cx="560" cy="410" r="4" fill="#378ADD"/><circle cx="328" cy="418" r="4" fill="#378ADD"/>
+</g>
+</svg>
+</div>
+
+<div class="tbl-wrap">
+<table aria-live="polite">
+  <thead><tr><th scope="col">From</th><th scope="col">To</th><th scope="col">Notes</th></tr></thead>
+  <tbody id="conn"></tbody>
+</table>
+</div>
+
+<h2>Schematic</h2>
+<p class="lede">The same circuit drawn with symbols. The dashed parts are the 12V lock side and the lock status switch, which you'll wire after testing.</p>
+<div class="figure">
+<svg viewBox="0 0 720 470" role="img" aria-labelledby="schTitle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="12">
+<title id="schTitle">Schematic of the door lock circuit</title>
+<g class="wire-ink" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <!-- ESP block -->
+  <rect x="280" y="50" width="140" height="380" rx="4"/>
+  <!-- relay block -->
+  <rect x="60" y="90" width="150" height="160" rx="4"/>
+  <rect x="78" y="128" width="26" height="46"/><line x1="78" y1="174" x2="104" y2="128"/>
+  <!-- relay control lines -->
+  <line x1="210" y1="130" x2="280" y2="130"/><line x1="210" y1="160" x2="280" y2="160"/>
+  <line x1="210" y1="190" x2="280" y2="190"/><line x1="210" y1="220" x2="280" y2="220"/>
+  <!-- relay JD GND -->
+  <line x1="60" y1="210" x2="40" y2="210"/>
+  <path d="M40 210 v10 m-8 0 h16 m-13 4 h10 m-7 4 h4"/>
+  <!-- OLED -->
+  <rect x="560" y="90" width="120" height="70" rx="4"/>
+  <line x1="420" y1="110" x2="560" y2="110"/><line x1="420" y1="140" x2="560" y2="140"/>
+  <line x1="600" y1="90" x2="600" y2="74"/>
+  <path d="M650 160 v12 m-8 0 h16 m-13 4 h10 m-7 4 h4"/>
+  <!-- reed -->
+  <line x1="420" y1="270" x2="495" y2="270"/>
+  <ellipse cx="525" cy="270" rx="38" ry="13"/>
+  <line x1="495" y1="270" x2="503" y2="270"/><line x1="503" y1="270" x2="542" y2="261"/>
+  <line x1="547" y1="270" x2="600" y2="270"/>
+  <path d="M600 270 v10 m-8 0 h16 m-13 4 h10 m-7 4 h4"/>
+  <!-- buzzer branch -->
+  <line x1="420" y1="350" x2="450" y2="350"/>
+  <path d="M450 350 l5 -6 l10 12 l10 -12 l10 12 l10 -12 l10 12 l5 -6"/>
+  <line x1="510" y1="350" x2="550" y2="350"/>
+  <rect x="550" y="338" width="30" height="24"/><line x1="558" y1="342" x2="558" y2="358"/><line x1="572" y1="342" x2="572" y2="358"/>
+  <line x1="580" y1="350" x2="620" y2="350"/>
+  <path d="M620 350 v10 m-8 0 h16 m-13 4 h10 m-7 4 h4"/>
+</g>
+<!-- dashed future parts -->
+<g class="wire-ink" fill="none" stroke-width="1.6" stroke-dasharray="5 4" stroke-linecap="round" opacity="0.8">
+  <!-- lock status switch on D6 -->
+  <line x1="420" y1="200" x2="500" y2="200"/><line x1="500" y1="200" x2="538" y2="188"/><line x1="545" y1="200" x2="600" y2="200"/>
+  <path d="M600 200 v10 m-8 0 h16 m-13 4 h10 m-7 4 h4"/>
+  <!-- 12V lock circuit -->
+  <line x1="85" y1="250" x2="85" y2="300"/>
+  <line x1="70" y1="300" x2="100" y2="300"/><line x1="77" y1="310" x2="93" y2="310"/>
+  <line x1="85" y1="310" x2="85" y2="420"/><line x1="85" y1="420" x2="170" y2="420"/>
+  <line x1="120" y1="250" x2="120" y2="280"/><line x1="120" y1="280" x2="170" y2="280"/><line x1="170" y1="280" x2="170" y2="300"/>
+  <rect x="160" y="300" width="20" height="70"/>
+  <line x1="170" y1="370" x2="170" y2="420"/>
+  <line x1="170" y1="290" x2="225" y2="290"/><line x1="225" y1="290" x2="225" y2="335"/>
+  <line x1="215" y1="335" x2="235" y2="335"/><path d="M215 355 L235 355 L225 335 Z"/>
+  <line x1="225" y1="355" x2="225" y2="400"/><line x1="225" y1="400" x2="170" y2="400"/>
+</g>
+<g class="svg-ink">
+  <text x="350" y="74" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-weight="500" font-size="13">NodeMCU ESP8266</text>
+  <text x="290" y="134">Vin</text><text x="290" y="164">3V3</text><text x="290" y="194">D5</text><text x="290" y="224">GND</text>
+  <text x="410" y="114" text-anchor="end">D1</text><text x="410" y="144" text-anchor="end">D2</text><text x="410" y="204" text-anchor="end">D6</text><text x="410" y="274" text-anchor="end">D7</text><text x="410" y="354" text-anchor="end">D8</text>
+  <text x="70" y="110" font-family="IBM Plex Sans, sans-serif" font-weight="500">Relay module</text>
+  <text x="200" y="134" text-anchor="end">JD-VCC</text><text x="200" y="164" text-anchor="end">VCC</text><text x="200" y="194" text-anchor="end">IN1</text><text x="200" y="224" text-anchor="end">GND</text>
+  <text x="70" y="206">GND</text>
+  <text x="85" y="243" text-anchor="middle" font-size="11">COM</text><text x="120" y="243" text-anchor="middle" font-size="11">NO</text><text x="155" y="243" text-anchor="middle" font-size="11">NC</text>
+  <text x="570" y="114">SCL</text><text x="570" y="144">SDA</text>
+  <text x="640" y="130" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-weight="500">OLED</text>
+  <text x="600" y="68" text-anchor="middle">3V3</text>
+  <text x="525" y="250" text-anchor="middle">reed switch</text>
+  <text x="480" y="334" text-anchor="middle">100Ω</text>
+  <text x="565" y="384" text-anchor="middle">buzzer</text><text x="552" y="333" font-size="11">+</text>
+</g>
+<g class="svg-muted">
+  <text x="520" y="180" text-anchor="middle">lock status (later)</text>
+  <text x="62" y="300" text-anchor="end">+</text><text x="62" y="318" text-anchor="end">12V</text>
+  <text x="186" y="340">lock</text><text x="232" y="380">1N4007</text>
+  <text x="40" y="455">12V lock side, wire after testing</text>
+</g>
+</svg>
+</div>
+<p class="legend">Ground symbols all connect to ESP8266 GND. The 12V negative stays on its own; the relay contacts keep the two sides separate.</p>
+</main>
+
+<script>
+const ground = ["GND (j29)", "− rail (right)", "Shared ground, shown in every view"];
+const data = {
+  buzzer: [
+    ["D8 (j26)", "j10", "Jumper"],
+    ["g10", "g6", "100Ω resistor"],
+    ["Buzzer +", "h6", "Same row as the resistor"],
+    ["Buzzer −", "h3", ""],
+    ["i3", "− rail", "Jumper"]
+  ],
+  relay: [
+    ["Vin (a30)", "JD-VCC", "5V for the relay coils"],
+    ["GND (a29)", "GND, 3-pin header", ""],
+    ["3V3 (j30)", "VCC, 4-pin header", "Logic side"],
+    ["D5 (j23)", "IN1", "LOW turns the relay on"],
+    ["− rail", "GND, 4-pin header", ""],
+    ["—", "Middle VCC pin and IN2", "Leave empty"]
+  ],
+  oled: [
+    ["D1 (j17)", "SCL", ""],
+    ["D2 (j18)", "SDA", "Don't swap with SCL"],
+    ["3V3 (j21)", "VCC", ""],
+    ["GND (j22)", "GND", ""]
+  ],
+  reed: [
+    ["D7 (j25)", "Reed wire 1", "Internal pull-up, no resistor"],
+    ["− rail", "Reed wire 2", "Either wire either way"]
+  ]
+};
+const layers = ["buzzer","relay","oled","reed"];
+const tbody = document.getElementById("conn");
+function row(r){
+  const tr = document.createElement("tr");
+  r.forEach((c,i)=>{const td=document.createElement("td");td.textContent=c;if(i===2)td.className="note";tr.appendChild(td);});
+  return tr;
+}
+function show(which){
+  layers.forEach(l=>{
+    const g=document.getElementById("layer-"+l);
+    g.style.opacity = (which==="all"||which===l) ? "1" : "0.08";
+  });
+  tbody.innerHTML="";
+  const rows = which==="all" ? layers.flatMap(l=>data[l]) : data[which];
+  rows.forEach(r=>tbody.appendChild(row(r)));
+  tbody.appendChild(row(ground));
+  document.querySelectorAll(".controls button").forEach(b=>b.setAttribute("aria-pressed", b.dataset.layer===which ? "true":"false"));
+}
+document.querySelectorAll(".controls button").forEach(b=>b.addEventListener("click",()=>show(b.dataset.layer)));
+show("all");
+</script>
+</body>
+</html>
