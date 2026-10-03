@@ -4,7 +4,7 @@
 //   Reed open:   "Cage OPEN" centered, flashing normal <-> inverted.
 // Blue area (rows 16-63) runs one of two playlists, restarting on reed change:
 //   Closed: JP + padlock slides in from the right and locks
-//           -> "Need something?" -> "Call your Manager" slides in
+//           -> "Need something?" -> "Get A-1" -> "or" -> "Call Your Manager" slides in
 //           -> "Polk Production Technologies" (fades) -> repeat.
 //   Open (inverted colors): JP + padlock unlocks -> close-the-cage message -> repeat.
 // On-board LED mirrors the reed: on = closed.
@@ -15,6 +15,7 @@
 #include <Fonts/FreeSansBold9pt7b.h>
 #include <Fonts/FreeSans12pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
+#include <Fonts/FreeSansBold18pt7b.h>
 #include "logo.h"
 
 const uint8_t REED_PIN = D7;         // window reed to GND, LOW = closed
@@ -31,8 +32,10 @@ const uint16_t FADE_STEP_MS = 50;    // 16 steps each way (Polk only)
 const uint16_t LOCK_MS = 3000;       // closed JP lock animation, total
 const uint16_t UNLOCK_MS = 2000;     // open JP unlock animation, total
 const uint16_t NEED_MS = 2000;       // "Need something?" on screen
-const uint16_t SLIDE_MS = 400;       // "Call your Manager" slide-in
-const uint16_t CALL_MS = 2000;       // "Call your Manager" on screen
+const uint16_t GET_MS = 1500;        // "Get A-1" on screen
+const uint16_t OR_MS = 700;          // "or" on screen
+const uint16_t SLIDE_MS = 400;       // "Call Your Manager" slide-in
+const uint16_t CALL_MS = 2000;       // "Call Your Manager" on screen
 const uint16_t TEXT_HOLD_MS = 3000;  // company name
 const uint16_t OPEN_MSG_MS = 3000;   // open message
 const uint16_t GAP_MS = 300;         // blank between screens
@@ -189,15 +192,34 @@ void drawMessage(const GFXfont *font, const char *l1, const char *l2,
   display.setFont(NULL);
 }
 
-// "Need something?", then an inverted "Call your Manager" panel slides in
-// from the left and covers it. t = ms into the hold.
+// One line of FreeSans Bold 18pt, centered.
+void drawBig(const char *s, int16_t baseline) {
+  display.setFont(&FreeSansBold18pt7b);
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  printCentered(s, baseline);
+  display.setFont(NULL);
+}
+
+// "Need something?" -> "Get A-1" -> "or" -> inverted "Call Your Manager"
+// panel slides in from the left. t = ms into the hold.
 void drawMsgScene(uint32_t t) {
-  drawMessage(&FreeSans12pt7b, "Need", "something?", 0, SSD1306_WHITE);
-  if (t < NEED_MS) return;
-  uint32_t st = t - NEED_MS;
-  int16_t x = (st >= SLIDE_MS) ? 0 : -128 + (int16_t)(128 * st / SLIDE_MS);
+  if (t < NEED_MS) {
+    drawMessage(&FreeSans12pt7b, "Need", "something?", 0, SSD1306_WHITE);
+    return;
+  }
+  t -= NEED_MS;
+  if (t < GET_MS) {
+    drawBig("Get A-1", 52);
+    return;
+  }
+  t -= GET_MS;
+  drawBig("or", 49);
+  if (t < OR_MS) return;
+  t -= OR_MS;
+  int16_t x = (t >= SLIDE_MS) ? 0 : -128 + (int16_t)(128 * t / SLIDE_MS);
   display.fillRect(x, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-  drawMessage(&FreeSansBold12pt7b, "Call your", "Manager", x, SSD1306_BLACK);
+  drawMessage(&FreeSansBold12pt7b, "Call Your", "Manager", x, SSD1306_BLACK);
 }
 
 void drawCompany() {
@@ -230,7 +252,7 @@ bool itemFades(uint8_t i) { return i == I_POLK; }
 uint16_t itemHoldMs(uint8_t i) {
   switch (i) {
     case I_LOCK: return LOCK_MS;
-    case I_MSG: return NEED_MS + SLIDE_MS + CALL_MS;
+    case I_MSG: return NEED_MS + GET_MS + OR_MS + SLIDE_MS + CALL_MS;
     case I_POLK: return TEXT_HOLD_MS;
     case I_UNLOCK: return UNLOCK_MS;
     default: return OPEN_MSG_MS;
