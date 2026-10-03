@@ -3,8 +3,10 @@
 //   Reed closed: "Cage Closed" scrolls continuously.
 //   Reed open:   "Cage OPEN" centered, flashing normal <-> inverted.
 // Blue area (rows 16-63): each screen fades in, holds, fades out, in order:
-//   inverted JP logo -> JP + padlock locking -> "Need something?" -> "Call your Manager"
-//   -> "Polk Production Technologies" -> repeat.
+//   inverted JP logo -> JP + padlock locking -> "Polk Production Technologies".
+//   Closing the reed jumps straight to the padlock animation.
+//   Between the lock and Polk: "Need something?" cuts in (no fade), then an
+//   inverted "Call your Manager" panel slides in from the left and cuts out.
 // On-board LED mirrors the reed: on = closed.
 // Libraries: Adafruit SSD1306, Adafruit GFX Library.
 #include <Wire.h>
@@ -28,7 +30,9 @@ const uint16_t FLASH_MS = 300;       // open: time per normal/inverted half
 const uint16_t FADE_STEP_MS = 50;    // 16 steps each way
 const uint16_t LOGO_HOLD_MS = 1000;
 const uint16_t LOCK_HOLD_MS = 2200;  // lock animation runs inside this
-const uint16_t MSG_HOLD_MS = 2000;   // "Need something?" / "Call your Manager"
+const uint16_t NEED_MS = 2000;       // "Need something?" on screen
+const uint16_t SLIDE_MS = 400;       // "Call your Manager" slide-in
+const uint16_t CALL_MS = 2000;       // "Call your Manager" on screen
 const uint16_t TEXT_HOLD_MS = 3000;  // company name
 const uint16_t GAP_MS = 300;         // blank between fades
 
@@ -50,7 +54,7 @@ uint32_t tTimer = 0;
 // Blue area cycle: each item fades in, holds, fades out, then a short gap.
 enum BluePhase { B_IN, B_HOLD, B_OUT, B_GAP };
 BluePhase bPhase = B_IN;
-enum BlueItem { I_LOGO, I_LOCK, I_NEED, I_CALL, I_POLK, I_COUNT };
+enum BlueItem { I_LOGO, I_LOCK, I_MSG, I_POLK, I_COUNT };
 uint8_t item = I_LOGO;
 uint8_t fadeLevel = 0;               // 0 = blank, 16 = fully drawn
 uint32_t bTimer = 0;
@@ -109,11 +113,11 @@ void drawTitle() {
 
 // ---------- blue area ----------
 
-void printCentered(const char *s, int16_t baseline) {
+void printCentered(const char *s, int16_t baseline, int16_t xoff = 0) {
   int16_t x1, y1;
   uint16_t w, h;
   display.getTextBounds(s, 0, baseline, &x1, &y1, &w, &h);
-  display.setCursor((128 - (int16_t)w) / 2 - x1, baseline);
+  display.setCursor(xoff + (128 - (int16_t)w) / 2 - x1, baseline);
   display.print(s);
 }
 
@@ -151,13 +155,25 @@ void drawLockScene(uint32_t t) {
 }
 
 // Two lines of 12pt text; baselines fit cap height + descenders in rows 16-63.
-void drawMessage(const GFXfont *font, const char *l1, const char *l2) {
+void drawMessage(const GFXfont *font, const char *l1, const char *l2,
+                 int16_t xoff, uint16_t color) {
   display.setFont(font);
   display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  printCentered(l1, 33);
-  printCentered(l2, 57);
+  display.setTextColor(color);
+  printCentered(l1, 33, xoff);
+  printCentered(l2, 57, xoff);
   display.setFont(NULL);
+}
+
+// "Need something?", then an inverted "Call your Manager" panel slides in
+// from the left and covers it. t = ms into the hold.
+void drawMsgScene(uint32_t t) {
+  drawMessage(&FreeSans12pt7b, "Need", "something?", 0, SSD1306_WHITE);
+  if (t < NEED_MS) return;
+  uint32_t st = t - NEED_MS;
+  int16_t x = (st >= SLIDE_MS) ? 0 : -128 + (int16_t)(128 * st / SLIDE_MS);
+  display.fillRect(x, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
+  drawMessage(&FreeSansBold12pt7b, "Call your", "Manager", x, SSD1306_BLACK);
 }
 
 void drawCompany() {
@@ -194,8 +210,7 @@ void drawBlue() {
     switch (item) {
       case I_LOGO: drawLogoInv(); break;
       case I_LOCK: drawLockScene(bPhase == B_IN ? 0 : bPhase == B_HOLD ? now - bTimer : 60000); break;
-      case I_NEED: drawMessage(&FreeSans12pt7b, "Need", "something?"); break;
-      case I_CALL: drawMessage(&FreeSansBold12pt7b, "Call your", "Manager"); break;
+      case I_MSG: drawMsgScene(bPhase == B_HOLD ? now - bTimer : 0); break;
       case I_POLK: drawCompany(); break;
     }
     applyFade(fadeLevel);
@@ -203,6 +218,7 @@ void drawBlue() {
 
   switch (bPhase) {
     case B_IN:
+      if (item == I_MSG) { fadeLevel = 16; bPhase = B_HOLD; bTimer = now; break; }  // cut in
       if (now - bTimer >= FADE_STEP_MS) {
         bTimer = now;
         if (++fadeLevel >= 16) bPhase = B_HOLD;
@@ -210,12 +226,13 @@ void drawBlue() {
       break;
     case B_HOLD:
       if (now - bTimer >= (item == I_LOGO ? LOGO_HOLD_MS : item == I_LOCK ? LOCK_HOLD_MS :
-                         item == I_POLK ? TEXT_HOLD_MS : MSG_HOLD_MS)) {
+                         item == I_POLK ? TEXT_HOLD_MS : NEED_MS + SLIDE_MS + CALL_MS)) {
         bPhase = B_OUT;
         bTimer = now;
       }
       break;
     case B_OUT:
+      if (item == I_MSG) { fadeLevel = 0; bPhase = B_GAP; break; }  // cut out
       if (now - bTimer >= FADE_STEP_MS) {
         bTimer = now;
         if (fadeLevel == 0 || --fadeLevel == 0) bPhase = B_GAP;
@@ -267,6 +284,12 @@ void loop() {
     digitalWrite(LED_PIN, reedStable);
     Serial.println(titleText());
     resetTitle();
+    if (reedStable == LOW) {  // closed: play the lock animation now
+      item = I_LOCK;
+      fadeLevel = 16;
+      bPhase = B_HOLD;
+      bTimer = millis();
+    }
   }
 
   if (millis() - lastFrame >= FRAME_MS) {

@@ -34,7 +34,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 ## Layout
 
 ```
-cage_lock/                main sketch: Cage Closed scrolls / Cage OPEN flashes (reed); blue area fades logo -> JP lock animation -> Need something? -> Call your Manager -> company; LED = reed
+cage_lock/                main sketch: Cage Closed scrolls / Cage OPEN flashes (reed); blue area: logo -> JP lock animation (also on reed close) -> Need something?/Call your Manager slide -> company; LED = reed
 docs/wiring.html          wiring page (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse
