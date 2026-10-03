@@ -5,8 +5,8 @@
 //   Reed open:   "Cage OPEN" centered, flashing normal <-> inverted.
 // Blue area (rows 16-63) runs one of two playlists, restarting on reed change:
 //   Closed: JP + padlock slides in from the right, locks, padlock rattles (x and y)
-//           -> "Need something?" -> "Get A-1" scrolls in (24pt) until "Get" is off,
-//              "A-1" holds 1 s -> "or"
+//           -> "Need something?" -> "Get A-1" scrolls in (24pt), "A-1" parks centered
+//              while "Get" leaves, holds 1 s -> "OR" (24pt)
 //           -> "Call Your Manager" slides in from the right
 //           -> "Polk Production Technologies" (fades) -> repeat.
 //   Open (inverted colors): "Close the Cage" -> JP unlock (shackle rises, wiggles)
@@ -45,7 +45,7 @@ const uint16_t NEED_MS = 2000;       // "Need something?" on screen
 const uint16_t GET_SCROLL_MS = 1720; // "Get A-1" scrolls until "Get" is off-screen
 const uint16_t A1_MS = 1000;         // "A-1" alone after "Get" leaves
 const uint16_t GET_MS = GET_SCROLL_MS + A1_MS;
-const uint16_t OR_MS = 700;          // "or" on screen
+const uint16_t OR_MS = 700;          // "OR" on screen
 const uint16_t SLIDE_MS = 400;       // "Call Your Manager" slide-in
 const uint16_t CALL_MS = 2000;       // "Call Your Manager" on screen
 const uint16_t TEXT_HOLD_MS = 3000;  // company name
@@ -222,9 +222,9 @@ void drawMessage(const GFXfont *font, const char *l1, const char *l2,
   display.setFont(NULL);
 }
 
-// One line of FreeSans Bold 18pt, centered.
+// One line of FreeSans Bold 24pt, centered.
 void drawBig(const char *s, int16_t baseline) {
-  display.setFont(&FreeSansBold18pt7b);
+  display.setFont(&FreeSansBold24pt7b);
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
   printCentered(s, baseline);
@@ -259,7 +259,7 @@ void drawOpenWords(uint32_t t) {
   else drawWord("CAGE", &FreeSansBold24pt7b, -2, 34);
 }
 
-// "Need something?" -> "Get A-1" -> "or" -> inverted "Call Your Manager"
+// "Need something?" -> "Get A-1" -> "OR" -> inverted "Call Your Manager"
 // panel slides in from the right. t = ms into the hold.
 void drawMsgScene(uint32_t t) {
   if (t < NEED_MS) {
@@ -268,20 +268,22 @@ void drawMsgScene(uint32_t t) {
   }
   t -= NEED_MS;
   if (t < GET_MS) {
-    // "Get" glyphs span 77 px: stop the moment they're fully off the left
-    // edge. "A-1" then sits at x = 14 (the space keeps it off the edge).
-    const int16_t STOP_X = -78;
-    int16_t x = (t < GET_SCROLL_MS) ? 128 - (int16_t)((128 - STOP_X) * t / GET_SCROLL_MS) : STOP_X;
+    // Scroll "Get A-1" together; "A-1" (67 px) parks in the center while
+    // "Get" (77 px, A-1 starts 92 px after it) keeps going off the left edge.
+    const int16_t GET_END = -78, A1_OFS = 92, A1_X = (128 - 67) / 2;
+    int16_t x = (t < GET_SCROLL_MS) ? 128 - (int16_t)((128 - GET_END) * t / GET_SCROLL_MS) : GET_END;
     display.setFont(&FreeSansBold24pt7b);
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(x, 57);
-    display.print("Get A-1");
+    display.print("Get");
+    display.setCursor(max(x + A1_OFS, (int)A1_X), 57);
+    display.print("A-1");
     display.setFont(NULL);
     return;
   }
   t -= GET_MS;
-  drawBig("or", 49);
+  drawBig("OR", 57);
   if (t < OR_MS) return;
   t -= OR_MS;
   int16_t x = (t >= SLIDE_MS) ? 0 : 128 - (int16_t)(128 * t / SLIDE_MS);
