@@ -1,10 +1,12 @@
 // Cage Lock main sketch.
 // Yellow band (rows 0-15):
-//   Reed closed: "Cage Closed" scrolls continuously.
+//   Reed closed: "Cage Closed" static; normal for one full blue-area cycle,
+//                inverted for the next, alternating.
 //   Reed open:   "Cage OPEN" centered, flashing normal <-> inverted.
 // Blue area (rows 16-63) runs one of two playlists, restarting on reed change:
-//   Closed: JP + padlock slides in from the right and locks
-//           -> "Need something?" -> "Get A-1" -> "or" -> "Call Your Manager" slides in
+//   Closed: JP + padlock slides in from the right, locks, padlock shakes
+//           -> "Need something?" -> "Get A-1" scrolls (24pt) -> "or"
+//           -> "Call Your Manager" slides in from the right
 //           -> "Polk Production Technologies" (fades) -> repeat.
 //   Open (inverted colors): JP + padlock unlocks -> close-the-cage message -> repeat.
 // On-board LED mirrors the reed: on = closed.
@@ -16,6 +18,7 @@
 #include <Fonts/FreeSans12pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
+#include <Fonts/FreeSansBold24pt7b.h>
 #include "logo.h"
 
 const uint8_t REED_PIN = D7;         // window reed to GND, LOW = closed
@@ -24,7 +27,6 @@ const uint16_t FRAME_MS = 25;
 const uint16_t DEBOUNCE_MS = 50;
 
 // Title timing
-const uint8_t SCROLL_PX = 2;         // px per frame
 const uint16_t FLASH_MS = 300;       // open: time per normal/inverted half
 
 // Blue area timing
@@ -32,7 +34,7 @@ const uint16_t FADE_STEP_MS = 50;    // 16 steps each way (Polk only)
 const uint16_t LOCK_MS = 3000;       // closed JP lock animation, total
 const uint16_t UNLOCK_MS = 2000;     // open JP unlock animation, total
 const uint16_t NEED_MS = 2000;       // "Need something?" on screen
-const uint16_t GET_MS = 1500;        // "Get A-1" on screen
+const uint16_t GET_MS = 2400;        // "Get A-1" scroll across, total
 const uint16_t OR_MS = 700;          // "or" on screen
 const uint16_t SLIDE_MS = 400;       // "Call Your Manager" slide-in
 const uint16_t CALL_MS = 2000;       // "Call Your Manager" on screen
@@ -54,8 +56,8 @@ Adafruit_SSD1306 display(128, 64, &Wire, -1);
 int reedStable = -1, reedLast = -1;
 uint32_t reedChange = 0, lastFrame = 0;
 
-int16_t scrollX = 128;
 bool flashInv = false;
+bool closedInv = false;              // toggles each closed playlist cycle
 uint32_t tTimer = 0;
 
 // Blue area: play the current playlist; Polk fades, everything else cuts.
@@ -93,8 +95,8 @@ void printTitle(const char *s, int16_t x, uint16_t color) {
 // ---------- yellow band ----------
 
 void resetTitle() {
-  scrollX = 128;
   flashInv = false;
+  closedInv = false;
   tTimer = millis();
 }
 
@@ -104,11 +106,9 @@ void drawTitle() {
   display.setFont(NULL);
 
   if (!isOpen()) {
-    // Closed: continuous scroll
-    display.fillRect(0, 0, 128, BAND_H, SSD1306_BLACK);
-    printTitle(t, scrollX, SSD1306_WHITE);
-    scrollX -= SCROLL_PX;
-    if (scrollX < -w) scrollX = 128;
+    // Closed: static, colors set per playlist cycle
+    display.fillRect(0, 0, 128, BAND_H, closedInv ? SSD1306_WHITE : SSD1306_BLACK);
+    printTitle(t, (128 - w) / 2, closedInv ? SSD1306_BLACK : SSD1306_WHITE);
     return;
   }
 
@@ -133,12 +133,11 @@ void printCentered(const char *s, int16_t baseline, int16_t xoff = 0) {
 
 // JP logo + padlock on a lit background.
 // shift: px the whole group is pushed right. lift: shackle raise in px.
-void drawPadlockScene(int16_t shift, int16_t lift, bool flash) {
+void drawPadlockScene(int16_t shift, int16_t lift, int16_t shake) {
   const int16_t GAP = 12, BODY_W = 26, BODY_H = 20;
   const int16_t lx = (128 - (JP_W + GAP + BODY_W)) / 2 + shift;
-  const int16_t bx = lx + JP_W + GAP, by = 43;
-  uint16_t bg = flash ? SSD1306_BLACK : SSD1306_WHITE;
-  uint16_t fg = flash ? SSD1306_WHITE : SSD1306_BLACK;
+  const int16_t bx = lx + JP_W + GAP + shake, by = 43;
+  const uint16_t bg = SSD1306_WHITE, fg = SSD1306_BLACK;
 
   display.fillRect(0, BLUE_Y, 128, BLUE_H, bg);
   display.drawBitmap(lx, LOGO_Y, JP_BMP, JP_W, JP_H, fg);
@@ -155,9 +154,9 @@ void drawPadlockScene(int16_t shift, int16_t lift, bool flash) {
 const int16_t LIFT_MAX = 10;
 
 // Closed. 0-500 ms: slides in from the right, shackle open.
-// 500-900: pause. 900-1300: shackle drops. 1300-1450: click flash.
+// 500-900: pause. 900-1300: shackle drops. 1300-1700: padlock shakes.
 void drawLockAnim(uint32_t t) {
-  int16_t shift = 0, lift = LIFT_MAX;
+  int16_t shift = 0, lift = LIFT_MAX, shake = 0;
   if (t < 500) {
     float p = 1 - t / 500.0;
     shift = 128 * p * p;            // ease out
@@ -167,10 +166,14 @@ void drawLockAnim(uint32_t t) {
     float p = (t - 900) / 400.0;
     lift = LIFT_MAX * (1 - p * p);  // accelerate like it's falling
   }
-  drawPadlockScene(shift, lift, t >= 1300 && t < 1450);
+  if (t >= 1300 && t < 1700) {
+    static const int8_t SHAKE[] = {3, -3, 2, -2, 1, -1, 0};
+    shake = SHAKE[min((uint32_t)6, (t - 1300) / 60)];
+  }
+  drawPadlockScene(shift, lift, shake);
 }
 
-// Open. 0-400 ms: locked. 400-700: shackle pops up with a flash.
+// Open. 0-400 ms: locked. 400-700: shackle pops up.
 void drawUnlockAnim(uint32_t t) {
   int16_t lift = 0;
   if (t >= 700) lift = LIFT_MAX;
@@ -178,7 +181,7 @@ void drawUnlockAnim(uint32_t t) {
     float p = 1 - (t - 400) / 300.0;
     lift = LIFT_MAX * (1 - p * p);  // fast then settle
   }
-  drawPadlockScene(0, lift, t >= 400 && t < 550);
+  drawPadlockScene(0, lift, 0);
 }
 
 // Two lines of 12pt text; baselines fit cap height + descenders in rows 16-63.
@@ -201,8 +204,20 @@ void drawBig(const char *s, int16_t baseline) {
   display.setFont(NULL);
 }
 
+// "Get A-1" in 24pt (159 px wide), scrolled right to left across the area.
+void drawGetScroll(uint32_t t) {
+  const int16_t W = 159, TRAVEL = 128 + W;
+  int16_t x = 128 - (int16_t)((uint32_t)TRAVEL * t / GET_MS);
+  display.setFont(&FreeSansBold24pt7b);
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(x, 57);  // 34 px cap height centered in rows 16-63
+  display.print("Get A-1");
+  display.setFont(NULL);
+}
+
 // "Need something?" -> "Get A-1" -> "or" -> inverted "Call Your Manager"
-// panel slides in from the left. t = ms into the hold.
+// panel slides in from the right. t = ms into the hold.
 void drawMsgScene(uint32_t t) {
   if (t < NEED_MS) {
     drawMessage(&FreeSans12pt7b, "Need", "something?", 0, SSD1306_WHITE);
@@ -210,14 +225,14 @@ void drawMsgScene(uint32_t t) {
   }
   t -= NEED_MS;
   if (t < GET_MS) {
-    drawBig("Get A-1", 52);
+    drawGetScroll(t);
     return;
   }
   t -= GET_MS;
   drawBig("or", 49);
   if (t < OR_MS) return;
   t -= OR_MS;
-  int16_t x = (t >= SLIDE_MS) ? 0 : -128 + (int16_t)(128 * t / SLIDE_MS);
+  int16_t x = (t >= SLIDE_MS) ? 0 : 128 - (int16_t)(128 * t / SLIDE_MS);
   display.fillRect(x, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
   drawMessage(&FreeSansBold12pt7b, "Call Your", "Manager", x, SSD1306_BLACK);
 }
@@ -272,6 +287,7 @@ void nextItem() {
   const uint8_t *list = isOpen() ? OPEN_LIST : CLOSED_LIST;
   uint8_t n = isOpen() ? sizeof(OPEN_LIST) : sizeof(CLOSED_LIST);
   listPos = (listPos + 1) % n;
+  if (listPos == 0 && !isOpen()) closedInv = !closedInv;  // new cycle
   item = list[listPos];
 }
 
