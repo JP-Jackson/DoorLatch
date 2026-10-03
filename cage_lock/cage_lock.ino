@@ -3,7 +3,7 @@
 //   Reed closed: "Cage Closed" scrolls continuously.
 //   Reed open:   "Cage OPEN" centered, flashing normal <-> inverted.
 // Blue area (rows 16-63): each screen fades in, holds, fades out, in order:
-//   inverted JP logo -> "Need something?" -> "Call your Manager"
+//   inverted JP logo -> JP + padlock locking -> "Need something?" -> "Call your Manager"
 //   -> "Polk Production Technologies" -> repeat.
 // On-board LED mirrors the reed: on = closed.
 // Libraries: Adafruit SSD1306, Adafruit GFX Library.
@@ -27,6 +27,7 @@ const uint16_t FLASH_MS = 300;       // open: time per normal/inverted half
 // Logo timing
 const uint16_t FADE_STEP_MS = 50;    // 16 steps each way
 const uint16_t LOGO_HOLD_MS = 1000;
+const uint16_t LOCK_HOLD_MS = 2200;  // lock animation runs inside this
 const uint16_t MSG_HOLD_MS = 2000;   // "Need something?" / "Call your Manager"
 const uint16_t TEXT_HOLD_MS = 3000;  // company name
 const uint16_t GAP_MS = 300;         // blank between fades
@@ -49,7 +50,7 @@ uint32_t tTimer = 0;
 // Blue area cycle: each item fades in, holds, fades out, then a short gap.
 enum BluePhase { B_IN, B_HOLD, B_OUT, B_GAP };
 BluePhase bPhase = B_IN;
-enum BlueItem { I_LOGO, I_NEED, I_CALL, I_POLK, I_COUNT };
+enum BlueItem { I_LOGO, I_LOCK, I_NEED, I_CALL, I_POLK, I_COUNT };
 uint8_t item = I_LOGO;
 uint8_t fadeLevel = 0;               // 0 = blank, 16 = fully drawn
 uint32_t bTimer = 0;
@@ -116,6 +117,39 @@ void printCentered(const char *s, int16_t baseline) {
   display.print(s);
 }
 
+// JP logo + padlock, inverted style. t = ms into the animation.
+//   0-400 ms: shackle raised (open)
+//   400-800 ms: shackle drops into the body
+//   800-950 ms: "click" flash (colors swap)
+void drawLockScene(uint32_t t) {
+  const int16_t GAP = 12, BODY_W = 26, BODY_H = 20;
+  const int16_t lx = (128 - (JP_W + GAP + BODY_W)) / 2;
+  const int16_t bx = lx + JP_W + GAP, by = 43;
+  const int16_t LIFT_MAX = 10;
+
+  int16_t lift = LIFT_MAX;
+  if (t >= 800) lift = 0;
+  else if (t >= 400) {
+    float p = (t - 400) / 400.0;
+    lift = LIFT_MAX * (1 - p * p);  // accelerate like it's falling
+  }
+  bool flash = (t >= 800 && t < 950);
+  uint16_t bg = flash ? SSD1306_BLACK : SSD1306_WHITE;
+  uint16_t fg = flash ? SSD1306_WHITE : SSD1306_BLACK;
+
+  display.fillRect(0, BLUE_Y, 128, BLUE_H, bg);
+  display.drawBitmap(lx, LOGO_Y, JP_BMP, JP_W, JP_H, fg);
+
+  // Shackle: hollow U, legs hidden in the body when closed
+  int16_t sx = bx + 3, sy = by - 16 - lift;
+  display.fillRoundRect(sx, sy, 20, 22, 10, fg);
+  display.fillRoundRect(sx + 4, sy + 4, 12, 22, 6, bg);
+  // Body + keyhole
+  display.fillRoundRect(bx, by, BODY_W, BODY_H, 3, fg);
+  display.fillCircle(bx + 13, by + 7, 3, bg);
+  display.fillRect(bx + 12, by + 8, 3, 7, bg);
+}
+
 // Two lines of 12pt text; baselines fit cap height + descenders in rows 16-63.
 void drawMessage(const GFXfont *font, const char *l1, const char *l2) {
   display.setFont(font);
@@ -159,6 +193,7 @@ void drawBlue() {
   if (bPhase != B_GAP) {
     switch (item) {
       case I_LOGO: drawLogoInv(); break;
+      case I_LOCK: drawLockScene(bPhase == B_IN ? 0 : bPhase == B_HOLD ? now - bTimer : 60000); break;
       case I_NEED: drawMessage(&FreeSans12pt7b, "Need", "something?"); break;
       case I_CALL: drawMessage(&FreeSansBold12pt7b, "Call your", "Manager"); break;
       case I_POLK: drawCompany(); break;
@@ -174,7 +209,8 @@ void drawBlue() {
       }
       break;
     case B_HOLD:
-      if (now - bTimer >= (item == I_LOGO ? LOGO_HOLD_MS : item == I_POLK ? TEXT_HOLD_MS : MSG_HOLD_MS)) {
+      if (now - bTimer >= (item == I_LOGO ? LOGO_HOLD_MS : item == I_LOCK ? LOCK_HOLD_MS :
+                         item == I_POLK ? TEXT_HOLD_MS : MSG_HOLD_MS)) {
         bPhase = B_OUT;
         bTimer = now;
       }
