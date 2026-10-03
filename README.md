@@ -34,7 +34,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 ## Layout
 
 ```
-cage_lock/                main sketch: title + blue-area playlist per reed state (closed: JP lock slide-in + shake, messages, company; open: Close the Cage, JP unlock + shackle wiggle, CLOSE / THE / CAGE one word at a time); LED = reed
+cage_lock/                main sketch: title + blue-area playlist per reed state (closed: JP lock slide-in + shake, messages, company; open: Close the Cage, JP unlock + shackle wiggle, CLOSE / THE / CAGE one word at a time); LED = reed; relay pulse via serial "p"
 docs/wiring.html          wiring page (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse

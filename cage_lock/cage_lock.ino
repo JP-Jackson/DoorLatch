@@ -12,6 +12,8 @@
 //   Open (inverted colors): "Close the Cage" -> JP unlock (shackle rises, wiggles)
 //           -> "CLOSE" / "THE" / "CAGE" one big word at a time -> JP unlock -> repeat.
 // On-board LED mirrors the reed: on = closed.
+// Relay (D5, active LOW) drives the 12V pulse lock: send 'p' over serial
+// (115200) for one 500 ms pulse. Never held on; 2 s minimum between pulses.
 // Libraries: Adafruit SSD1306, Adafruit GFX Library.
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -25,6 +27,10 @@
 
 const uint8_t REED_PIN = D7;         // window reed to GND, LOW = closed
 const uint8_t LED_PIN = LED_BUILTIN; // D4/GPIO2, active LOW
+const uint8_t RELAY_PIN = D5;        // relay IN1, active LOW
+const uint8_t RELAY_ON = LOW, RELAY_OFF = HIGH;
+const uint16_t PULSE_MS = 500;       // hard max for the lock coil - do not raise
+const uint16_t PULSE_GAP_MS = 2000;  // let the solenoid cool between pulses
 const uint16_t FRAME_MS = 25;
 const uint16_t DEBOUNCE_MS = 50;
 
@@ -60,6 +66,8 @@ const uint8_t BAYER[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 
 int reedStable = -1, reedLast = -1;
+bool relayActive = false;
+uint32_t relayOnAt = 0, relayOffAt = 0;
 uint32_t reedChange = 0, lastFrame = 0;
 
 bool flashInv = false;
@@ -382,9 +390,37 @@ void drawBlue() {
   }
 }
 
+// ---------- relay ----------
+
+void pulseRelay() {
+  if (relayActive || millis() - relayOffAt < PULSE_GAP_MS) {
+    Serial.println(F("Pulse skipped (too soon)"));
+    return;
+  }
+  digitalWrite(RELAY_PIN, RELAY_ON);
+  relayActive = true;
+  relayOnAt = millis();
+  Serial.println(F("Unlock pulse"));
+}
+
+// Called every loop: ends the pulse on time and keeps the coil off otherwise.
+void serviceRelay() {
+  if (relayActive && millis() - relayOnAt >= PULSE_MS) {
+    relayActive = false;
+    relayOffAt = millis();
+  }
+  if (!relayActive) digitalWrite(RELAY_PIN, RELAY_OFF);
+}
+
 // ---------- main ----------
 
 void setup() {
+  // Latch HIGH before switching to OUTPUT so the relay doesn't click at boot.
+  digitalWrite(RELAY_PIN, RELAY_OFF);
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, RELAY_OFF);
+  relayOffAt = millis() - PULSE_GAP_MS;
+
   pinMode(REED_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   Serial.begin(115200);
@@ -406,6 +442,9 @@ void setup() {
 }
 
 void loop() {
+  if (Serial.available() && Serial.read() == 'p') pulseRelay();
+  serviceRelay();
+
   // Window reed, debounced. LED on (LOW) when closed.
   int r = digitalRead(REED_PIN);
   if (r != reedLast) {
