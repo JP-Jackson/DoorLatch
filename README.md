@@ -34,7 +34,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 ## Layout
 
 ```
-cage_lock/                main sketch: OPEN/CLOSED + LOCKED/UNLOCKED status, playlist per state, auto-lock with feedback check
+cage_lock/                main sketch: door + chain-lock status (band alternates), playlist per state, relay manual only (serial "unlock")
 docs/wiring.html          wiring page (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse

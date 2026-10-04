@@ -1,22 +1,25 @@
 // Cage Lock main sketch.
-// Inputs: door reed D7 (LOW = closed), lock feedback D6 dry contact (LOW = locked).
-// Yellow band (rows 0-15): "CLOSED"/"OPEN" + padlock icon (locked/unlocked) at right.
-//   Closed: static; normal for one full blue-area cycle, inverted for the next.
-//   Open:   flashing normal <-> inverted.
+// Inputs: door reed D7 (LOW = closed), chain lock feedback D6 dry contact (LOW = locked).
+// The lock is a chain around the door, separate from the door itself.
+// Yellow band (rows 0-15): door word and lock word alternate every second
+//   (CLOSED <-> LOCKED, OPEN <-> UNLOCKED, ...).
+//   Door closed: static; normal for one full blue-area cycle, inverted for the next.
+//   Door open:   flashing normal <-> inverted.
 // Blue area (rows 16-63): playlist per state, restarting whenever either input changes.
 //   CLOSED + LOCKED:   JP + padlock slides in from the right, locks, padlock rattles
 //                      -> "Need something?" -> "Get A-1" (A-1 parks centered) -> "OR"
 //                      -> "Call Your Manager" slides in from the right
 //                      -> "Polk Production Technologies" (fades) -> repeat.
-//   CLOSED + UNLOCKED: JP unlock -> "LOCK" / "IT!" -> repeat (nag).
+//   CLOSED + UNLOCKED: "Closed but" -> "NOT" -> "LOCKED!" (inverted).
 //   OPEN + UNLOCKED:   "Close the Cage" -> JP unlock -> "CLOSE" / "THE" / "CAGE"
 //                      -> JP unlock -> repeat (inverted colors).
-//   OPEN + LOCKED:     "Lock is engaged!" / "Unlock to close door" warning.
+//   OPEN + LOCKED:     "Chain is locked but door open!" (shouldn't happen).
 // On-board LED mirrors the reed: on = closed.
-// Relay (D5, active LOW) pulses the 12V lock 500 ms. When the door closes and the
-// lock still reads unlocked 1 s later, it pulses, checks feedback 2 s later and
-// retries once.
-// Serial 'p' (115200) fires a manual pulse. Never held on; 2 s minimum between pulses.
+// Relay (D5, active LOW): never fires on its own. Typing "unlock" + Enter over
+// serial (115200) sends one manual 500 ms pulse; 2 s minimum between pulses.
+// Serial is ignored for the first 3 s after boot so noise can't trigger it.
+// Boot/power loss: D5 (GPIO14) is high-impedance until setup() drives it HIGH,
+// so the relay stays off through reset, brownout and power-up.
 // Libraries: Adafruit SSD1306, Adafruit GFX Library.
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -29,15 +32,14 @@
 #include "logo.h"
 
 const uint8_t REED_PIN = D7;         // door reed to GND, LOW = closed
-const uint8_t LOCK_PIN = D6;         // lock feedback dry contact to GND, closed when locked
+const uint8_t LOCK_PIN = D6;         // chain lock feedback, dry contact to GND, closed when locked
 const uint8_t LOCKED_LEVEL = LOW;
 const uint8_t LED_PIN = LED_BUILTIN; // D4/GPIO2, active LOW
 const uint8_t RELAY_PIN = D5;        // relay IN1, active LOW
 const uint8_t RELAY_ON = LOW, RELAY_OFF = HIGH;
 const uint16_t PULSE_MS = 500;       // hard max for the lock coil - do not raise
 const uint16_t PULSE_GAP_MS = 2000;  // let the solenoid cool between pulses
-const bool AUTO_LOCK = true;         // door closes + unlocked -> pulse, verify, retry once
-const uint16_t AUTO_LOCK_DELAY_MS = 1000;  // let a self-latching lock report first
+const uint16_t SERIAL_IGNORE_MS = 3000;  // drop serial input right after boot
 const uint16_t FRAME_MS = 25;
 const uint16_t DEBOUNCE_MS = 50;
 
@@ -62,9 +64,11 @@ const uint16_t GAP_MS = 300;         // blank between screens
 // Open message (two lines, FreeSans Bold 12pt, max ~128 px each)
 const char OPEN_L1[] = "Close the";
 const char OPEN_L2[] = "Cage";
-const uint16_t WORD_MS = 700;        // "CLOSE" / "THE" / "CAGE" / "LOCK" each
-const uint16_t LAST_WORD_MS = 1200;  // "CAGE" / "IT!" hold a bit longer
-const uint16_t WARN_MS = 1800;       // each half of the open+locked warning
+const uint16_t BAND_SWAP_MS = 1000;  // band alternates door word / lock word
+const uint16_t WORD_MS = 700;        // "CLOSE" / "THE" / "CAGE" each
+const uint16_t LAST_WORD_MS = 1200;  // "CAGE" holds a bit longer
+const uint16_t NOTLOCKED_MS = 3400;  // "Closed but" / "NOT" / "LOCKED!" total
+const uint16_t WARN_MS = 3000;       // open + locked message
 
 const int16_t BAND_H = 16, BLUE_Y = 16, BLUE_H = 48;
 const int16_t LOGO_Y = BLUE_Y + (BLUE_H - JP_H) / 2;
@@ -76,10 +80,6 @@ Adafruit_SSD1306 display(128, 64, &Wire, -1);
 int reedStable = -1, reedLast = -1;
 int lockStable = -1, lockLast = -1;
 uint32_t lockChange = 0;
-bool lockPending = false;            // auto-lock waiting for feedback
-bool autoLockArmed = false;          // door just closed, decide after the delay
-uint32_t closedAt = 0;
-uint8_t lockRetries = 0;
 bool relayActive = false;
 uint32_t relayOnAt = 0, relayOffAt = 0;
 uint32_t reedChange = 0, lastFrame = 0;
@@ -91,9 +91,9 @@ uint32_t tTimer = 0;
 // Blue area: play the current playlist; Polk fades, everything else cuts.
 enum BluePhase { B_IN, B_HOLD, B_OUT, B_GAP };
 BluePhase bPhase = B_IN;
-enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENWORDS, I_LOCKIT, I_WARN };
+enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENWORDS, I_NOTLOCKED, I_WARN };
 const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_POLK};          // closed + locked
-const uint8_t NAG_LIST[] = {I_UNLOCK, I_LOCKIT};                // closed + unlocked
+const uint8_t NAG_LIST[] = {I_NOTLOCKED};                       // closed + unlocked
 const uint8_t OPEN_LIST[] = {I_OPENMSG, I_UNLOCK, I_OPENWORDS, I_UNLOCK};  // open + unlocked
 const uint8_t WARN_LIST[] = {I_WARN};                           // open + locked
 uint8_t listPos = 0;
@@ -103,7 +103,12 @@ uint32_t bTimer = 0;
 
 bool isOpen() { return reedStable == HIGH; }
 bool isLocked() { return lockStable == LOCKED_LEVEL; }
-const char *titleText() { return isOpen() ? "OPEN" : "CLOSED"; }
+bool bandShowsLock = false;          // band alternates door word / lock word
+uint32_t bandTimer = 0;
+const char *titleText() {
+  if (bandShowsLock) return isLocked() ? "LOCKED" : "UNLOCKED";
+  return isOpen() ? "OPEN" : "CLOSED";
+}
 const char *stateText() {
   if (isOpen()) return isLocked() ? "OPEN - LOCKED" : "OPEN - UNLOCKED";
   return isLocked() ? "CLOSED - LOCKED" : "CLOSED - UNLOCKED";
@@ -132,32 +137,21 @@ void printTitle(const char *s, int16_t x, uint16_t color) {
 void resetTitle() {
   flashInv = false;
   closedInv = false;
-  tTimer = millis();
-}
-
-// 12x15 padlock icon at the right end of the band. Unlocked lifts the
-// shackle so there's a gap above the body.
-void drawLockIcon(uint16_t fg, uint16_t bg) {
-  const int16_t x = 114, by = 8;
-  int16_t sy = isLocked() ? 2 : -1;
-  display.fillRoundRect(x + 2, sy, 8, 9, 4, fg);
-  display.fillRoundRect(x + 4, sy + 2, 4, 9, 2, bg);
-  display.fillRect(x, by, 12, 8, fg);
-  display.fillRect(x + 5, by + 2, 2, 3, bg);  // keyhole
+  bandShowsLock = false;
+  tTimer = bandTimer = millis();
 }
 
 void drawTitle() {
+  if (millis() - bandTimer >= BAND_SWAP_MS) {
+    bandTimer = millis();
+    bandShowsLock = !bandShowsLock;
+  }
   const char *t = titleText();
   int16_t w = titleWidth(t);
   bool inv = isOpen() ? flashInv : closedInv;
-  uint16_t bg = inv ? SSD1306_WHITE : SSD1306_BLACK;
-  uint16_t fg = inv ? SSD1306_BLACK : SSD1306_WHITE;
   display.setFont(NULL);
-
-  // Text centered in the space left of the icon
-  display.fillRect(0, 0, 128, BAND_H, bg);
-  printTitle(t, (112 - w) / 2, fg);
-  drawLockIcon(fg, bg);
+  display.fillRect(0, 0, 128, BAND_H, inv ? SSD1306_WHITE : SSD1306_BLACK);
+  printTitle(t, (128 - w) / 2, inv ? SSD1306_BLACK : SSD1306_WHITE);
 
   // Open: flash between normal and inverted. Closed: set per playlist cycle.
   if (isOpen() && millis() - tTimer >= FLASH_MS) {
@@ -290,17 +284,29 @@ void drawOpenWords(uint32_t t) {
   else drawWord("CAGE", &FreeSansBold24pt7b, -2, 34);
 }
 
-// Closed but unlocked: "LOCK" (134 px in 24pt, squeezed 3 px) / "IT!"
-void drawLockItWords(uint32_t t) {
-  if (t < WORD_MS) drawWord("LOCK", &FreeSansBold24pt7b, -3, 34);
-  else drawWord("IT!", &FreeSansBold24pt7b, 0, 34);
+// Closed but chain not locked: "Closed but" -> "NOT" -> "LOCKED!", inverted.
+// "LOCKED!" is 108 px in 12pt bold; anything bigger won't fit.
+void drawNotLocked(uint32_t t) {
+  if (t < 1200) {
+    display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
+    drawMessage(&FreeSansBold12pt7b, "Closed", "but", 0, SSD1306_BLACK);
+  } else if (t < 1900) {
+    drawWord("NOT", &FreeSansBold24pt7b, 0, 34);
+  } else {
+    drawWord("LOCKED!", &FreeSansBold12pt7b, 0, 17);
+  }
 }
 
-// Open but locked: the bolt is out, so the door can't latch.
-void drawWarn(uint32_t t) {
+// Open but chain locked: shouldn't happen (chain locked with the door open).
+void drawWarn() {
   display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-  if (t < WARN_MS) drawMessage(&FreeSansBold12pt7b, "Lock is", "engaged!", 0, SSD1306_BLACK);
-  else drawMessage(&FreeSansBold12pt7b, "Unlock to", "close door", 0, SSD1306_BLACK);
+  display.setFont(&FreeSansBold9pt7b);
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_BLACK);
+  printCentered("Chain is", 28);
+  printCentered("locked but", 43);
+  printCentered("door open!", 58);
+  display.setFont(NULL);
 }
 
 // "Need something?" -> "Get A-1" -> "OR" -> inverted "Call Your Manager"
@@ -369,8 +375,8 @@ uint16_t itemHoldMs(uint8_t i) {
     case I_POLK: return TEXT_HOLD_MS;
     case I_UNLOCK: return UNLOCK_MS;
     case I_OPENWORDS: return 2 * WORD_MS + LAST_WORD_MS;
-    case I_LOCKIT: return WORD_MS + LAST_WORD_MS;
-    case I_WARN: return 2 * WARN_MS;
+    case I_NOTLOCKED: return NOTLOCKED_MS;
+    case I_WARN: return WARN_MS;
     default: return OPEN_MSG_MS;
   }
 }
@@ -416,8 +422,8 @@ void drawBlue() {
       case I_UNLOCK: drawUnlockAnim(t); break;
       case I_OPENMSG: drawOpenMsg(); break;
       case I_OPENWORDS: drawOpenWords(t); break;
-      case I_LOCKIT: drawLockItWords(t); break;
-      case I_WARN: drawWarn(t); break;
+      case I_NOTLOCKED: drawNotLocked(t); break;
+      case I_WARN: drawWarn(); break;
     }
     applyFade(fadeLevel);
   }
@@ -473,31 +479,22 @@ void serviceRelay() {
   if (!relayActive) digitalWrite(RELAY_PIN, RELAY_OFF);
 }
 
-// Auto-lock: pulse when the door closes unlocked, then check the feedback
-// once the cool-down passes; retry once, then give up and report.
-void startAutoLock() {
-  if (!AUTO_LOCK || isOpen() || isLocked()) return;
-  lockPending = true;
-  lockRetries = 0;
-  pulseRelay();
-}
-
-void serviceAutoLock() {
-  if (autoLockArmed && millis() - closedAt >= AUTO_LOCK_DELAY_MS) {
-    autoLockArmed = false;
-    startAutoLock();
-  }
-  if (!lockPending || relayActive || millis() - relayOffAt < PULSE_GAP_MS) return;
-  if (isOpen() || isLocked()) {
-    lockPending = false;
-    if (isLocked()) Serial.println(F("Lock confirmed"));
-  } else if (lockRetries == 0) {
-    lockRetries = 1;
-    Serial.println(F("Lock not confirmed, retrying"));
-    pulseRelay();
-  } else {
-    lockPending = false;
-    Serial.println(F("Lock did not confirm"));
+// Manual pulse: the whole word "unlock" on a line. Anything else is ignored.
+void serviceSerial() {
+  static char buf[12];
+  static uint8_t len = 0;
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (millis() < SERIAL_IGNORE_MS) { len = 0; continue; }
+    if (c == '\n' || c == '\r') {
+      buf[len] = 0;
+      if (len && strcmp(buf, "unlock") == 0) pulseRelay();
+      len = 0;
+    } else if (len < sizeof(buf) - 1) {
+      buf[len++] = c;
+    } else {
+      len = 0;  // too long, not a command
+    }
   }
 }
 
@@ -533,9 +530,8 @@ void setup() {
 }
 
 void loop() {
-  if (Serial.available() && Serial.read() == 'p') pulseRelay();
+  serviceSerial();
   serviceRelay();
-  serviceAutoLock();
 
   // Door reed, debounced. LED on (LOW) when closed.
   int r = digitalRead(REED_PIN);
@@ -549,8 +545,6 @@ void loop() {
     Serial.println(stateText());
     resetTitle();
     startPlaylist();
-    autoLockArmed = !isOpen();
-    closedAt = millis();
   }
 
   // Lock feedback, debounced.
