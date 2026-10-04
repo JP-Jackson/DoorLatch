@@ -23,7 +23,7 @@
 // Web API (port 80):
 //   GET /status  -> {"door":"closed","chain":"locked","state":"CLOSED & LOCKED",
 //                    "rssi":-61,"relay":false}
-//   PUT /unlock?name=JP -> runs the unlock sequence (name optional, max 16 chars).
+//   PUT /unlock?name=JP -> runs the unlock sequence (name optional, max 32 chars).
 //                   Needs header "X-Api-Key: <API_KEY>". 202 accepted (relay fires
 //                   at the end of the countdown), 401 bad/missing key, 409 busy.
 //   CORS is open so a browser web app can call it.
@@ -436,14 +436,15 @@ void startPlaylist();
 bool pulseRelay();
 
 const uint16_t SEQ_INTRO_MS = 1500, SEQ_WORD_MS = 600;
-const uint16_t NAME_PX_PER_S = 120;   // same speed as "Get A-1"
+const uint16_t NAME_PX_PER_S = 120;   // same speed as "Get A-1"...
+const uint16_t NAME_MAX_MS = 5000;    // ...but long names speed up to finish in 5 s
 const int16_t NAME_BASE = 52;         // 24pt baseline; leaves room for g/y/p tails
 int16_t seqNameW = 0, seqNameX1 = 0;
 uint16_t seqNameMs = 0;
 const uint16_t SEQ_COUNT_MS = 1000, SEQ_DONE_MS = 2000;
 bool seqActive = false, seqFired = false;
 uint32_t seqStart = 0;
-char seqName[17] = "";
+char seqName[33] = "";               // up to 32 chars
 
 uint32_t seqFireAt() {
   uint32_t t = SEQ_INTRO_MS;
@@ -451,7 +452,7 @@ uint32_t seqFireAt() {
   return t + SEQ_WORD_MS + 3 * SEQ_COUNT_MS;  // "in" + 3, 2, 1
 }
 
-// Keep printable ASCII, trim, max 16 chars.
+// Keep printable ASCII, trim, max 32 chars.
 void setSeqName(const char *n) {
   uint8_t len = 0;
   while (*n == ' ') n++;
@@ -472,7 +473,7 @@ bool startUnlockSeq(const char *name) {
   display.getTextBounds(seqName, 0, NAME_BASE, &seqNameX1, &y1, &w, &h);
   display.setFont(NULL);
   seqNameW = w;
-  seqNameMs = (uint32_t)(128 + seqNameW) * 1000 / NAME_PX_PER_S;
+  seqNameMs = min((uint32_t)NAME_MAX_MS, (uint32_t)(128 + seqNameW) * 1000 / NAME_PX_PER_S);
   seqActive = true;
   seqFired = false;
   seqStart = millis();
@@ -683,7 +684,7 @@ h1{font-size:1.4rem}#st{font-size:1.6rem;font-weight:700;padding:14px;border-rad
 .bad{color:#ffb000}input,button{width:100%;box-sizing:border-box;font-size:1.1rem;padding:12px;margin:6px 0;border-radius:8px;border:1px solid #444;background:#1b1b1b;color:#eee}
 button{background:#1f6b4a;border:0;font-weight:700}button:disabled{opacity:.5}#msg{min-height:1.4em;color:#aaa}small{color:#888}</style></head>
 <body><h1>Cage Lock</h1><div id="st">...</div><p><small id="sig"></small></p>
-<input id="name" placeholder="Name (optional)" maxlength="16">
+<input id="name" placeholder="Name (optional)" maxlength="32">
 <button id="go">Unlock</button><div id="msg"></div>
 <details><summary><small>API key</small></summary><input id="key" placeholder="API key"></details>
 <script>
