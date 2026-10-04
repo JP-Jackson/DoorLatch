@@ -15,6 +15,15 @@
 //                      -> JP unlock -> repeat (inverted colors).
 //   OPEN + LOCKED:     "Chain is locked but door open!" (shouldn't happen).
 // On-board LED mirrors the reed: on = closed.
+// WiFi: joins the network in secrets.h in the background (display and inputs keep
+//   running if it's down). Band shows signal bars at the right; a blinking X when
+//   not connected. mDNS name: cagelock.local
+// Web API (port 80):
+//   GET /status  -> {"door":"closed","chain":"locked","state":"CLOSED & LOCKED",
+//                    "rssi":-61,"relay":false}
+//   PUT /unlock  -> one 500 ms relay pulse. Needs header "X-Api-Key: <API_KEY>".
+//                   200 ok, 401 bad/missing key, 429 too soon (2 s cool-down).
+//   CORS is open so a browser web app can call it.
 // Relay (D5, active LOW): never fires on its own. Typing "unlock" + Enter over
 // serial (115200) sends one manual 500 ms pulse; 2 s minimum between pulses.
 // Serial is ignored for the first 3 s after boot so noise can't trigger it.
@@ -29,7 +38,20 @@
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeSansBold24pt7b.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
 #include "logo.h"
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#error "Copy secrets.h.example to cage_lock/secrets.h and fill in WIFI_SSID, WIFI_PASS, API_KEY"
+#endif
+
+const char HOSTNAME[] = "cagelock";
+ESP8266WebServer server(80);
+bool mdnsStarted = false;
+bool wifiWasUp = false;
 
 const uint8_t REED_PIN = D7;         // door reed to GND, LOW = closed
 const uint8_t LOCK_PIN = D6;         // chain lock feedback, dry contact to GND, closed when locked
@@ -131,13 +153,37 @@ void resetTitle() {
   tTimer = millis();
 }
 
+// 4 signal bars (3/6/9/12 px tall) at the right of the band.
+// Not connected: a blinking X instead.
+void drawWifiIcon(uint16_t fg) {
+  const int16_t x = 116, base = 13;
+  if (WiFi.status() != WL_CONNECTED) {
+    if ((millis() / 500) % 2 == 0) {
+      display.drawLine(x + 2, base - 9, x + 9, base - 2, fg);
+      display.drawLine(x + 3, base - 9, x + 10, base - 2, fg);
+      display.drawLine(x + 9, base - 9, x + 2, base - 2, fg);
+      display.drawLine(x + 10, base - 9, x + 3, base - 2, fg);
+    }
+    return;
+  }
+  long rssi = WiFi.RSSI();
+  int8_t bars = rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : rssi > -85 ? 1 : 0;
+  for (int8_t i = 0; i < 4; i++) {
+    int16_t h = 3 * (i + 1), bx = x + i * 3;
+    if (i < bars) display.fillRect(bx, base - h + 1, 2, h, fg);
+    else display.drawPixel(bx, base, fg);  // empty bar: just a dot on the baseline
+  }
+}
+
 void drawTitle() {
   const char *t = titleText();
   int16_t w = titleWidth(t);
   bool inv = isOpen() ? flashInv : closedInv;
   display.setFont(NULL);
   display.fillRect(0, 0, 128, BAND_H, inv ? SSD1306_WHITE : SSD1306_BLACK);
-  printTitle(t, (128 - w) / 2, inv ? SSD1306_BLACK : SSD1306_WHITE);
+  // Text centered in the space left of the WiFi icon (x 116-127)
+  printTitle(t, (114 - w) / 2, inv ? SSD1306_BLACK : SSD1306_WHITE);
+  drawWifiIcon(inv ? SSD1306_BLACK : SSD1306_WHITE);
 
   // Open: flash between normal and inverted. Closed: set per playlist cycle.
   if (isOpen() && millis() - tTimer >= FLASH_MS) {
@@ -457,15 +503,16 @@ void drawBlue() {
 
 // ---------- relay ----------
 
-void pulseRelay() {
+bool pulseRelay() {
   if (relayActive || millis() - relayOffAt < PULSE_GAP_MS) {
     Serial.println(F("Pulse skipped (too soon)"));
-    return;
+    return false;
   }
   digitalWrite(RELAY_PIN, RELAY_ON);
   relayActive = true;
   relayOnAt = millis();
   Serial.println(F("Relay pulse"));
+  return true;
 }
 
 // Called every loop: ends the pulse on time and keeps the coil off otherwise.
@@ -496,6 +543,77 @@ void serviceSerial() {
   }
 }
 
+// ---------- WiFi + web ----------
+
+void sendCors() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "X-Api-Key, Content-Type");
+}
+
+void handleStatus() {
+  String j = "{\"door\":\"";
+  j += isOpen() ? "open" : "closed";
+  j += "\",\"chain\":\"";
+  j += isLocked() ? "locked" : "unlocked";
+  j += "\",\"state\":\"";
+  j += titleText();
+  j += "\",\"rssi\":";
+  j += WiFi.RSSI();
+  j += ",\"relay\":";
+  j += relayActive ? "true" : "false";
+  j += "}";
+  sendCors();
+  server.send(200, "application/json", j);
+}
+
+void handleUnlock() {
+  sendCors();
+  if (server.header("X-Api-Key") != API_KEY) {
+    server.send(401, "application/json", "{\"ok\":false,\"error\":\"bad key\"}");
+    return;
+  }
+  Serial.println(F("Web unlock request"));
+  if (pulseRelay()) server.send(200, "application/json", "{\"ok\":true}");
+  else server.send(429, "application/json", "{\"ok\":false,\"error\":\"too soon\"}");
+}
+
+void handlePreflight() {
+  sendCors();
+  server.send(204);
+}
+
+void setupWeb() {
+  WiFi.mode(WIFI_STA);
+  WiFi.hostname(HOSTNAME);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);  // non-blocking; loop() carries on
+
+  const char *keys[] = {"X-Api-Key"};
+  server.collectHeaders(keys, 1);
+  server.on("/status", HTTP_GET, handleStatus);
+  server.on("/unlock", HTTP_PUT, handleUnlock);
+  server.on("/status", HTTP_OPTIONS, handlePreflight);
+  server.on("/unlock", HTTP_OPTIONS, handlePreflight);
+  server.onNotFound([]() { sendCors(); server.send(404, "text/plain", "not found"); });
+  server.begin();
+}
+
+void serviceWeb() {
+  bool up = WiFi.status() == WL_CONNECTED;
+  if (up && !wifiWasUp) {
+    Serial.print(F("WiFi connected, IP "));
+    Serial.println(WiFi.localIP());
+    if (!mdnsStarted) mdnsStarted = MDNS.begin(HOSTNAME);
+  } else if (!up && wifiWasUp) {
+    Serial.println(F("WiFi lost"));
+  }
+  wifiWasUp = up;
+  if (mdnsStarted) MDNS.update();
+  server.handleClient();
+}
+
 // ---------- main ----------
 
 void setup() {
@@ -517,6 +635,7 @@ void setup() {
     while (true) delay(1000);
   }
   Serial.println(F("\nCage Lock"));
+  setupWeb();
   display.setTextWrap(false);
   display.clearDisplay();
 
@@ -529,6 +648,7 @@ void setup() {
 
 void loop() {
   serviceSerial();
+  serviceWeb();
   serviceRelay();
 
   // Door reed, debounced. LED on (LOW) when closed.

@@ -50,6 +50,20 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 - The relay never fires on a state change; only serial `unlock` + Enter sends a 500 ms pulse.
 - Power-up/reset: D5 (GPIO14) stays high-impedance until setup() drives it HIGH, so the relay stays off. Wire the lock on COM + NO (never NC) and use a fail-secure lock.
 
+## WiFi + web API (cage_lock)
+
+Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) with WIFI_SSID, WIFI_PASS (2.4 GHz) and API_KEY. Change it and reflash when moving networks.
+
+- `GET http://cagelock.local/status` -> `{"door":"closed","chain":"locked","state":"CLOSED & LOCKED","rssi":-61,"relay":false}`
+- `PUT http://cagelock.local/unlock` with header `X-Api-Key: <API_KEY>` -> one 500 ms relay pulse. 200 ok, 401 bad key, 429 too soon.
+- CORS open for a browser web app. Band shows WiFi bars at the right; blinking X = not connected.
+
+PowerShell test:
+```powershell
+Invoke-RestMethod http://cagelock.local/status
+Invoke-RestMethod -Method Put http://cagelock.local/unlock -Headers @{ "X-Api-Key" = "<API_KEY>" }
+```
+
 ## Parts
 
 - HiLetgo NodeMCU ESP8266 (CP2102)
@@ -65,7 +79,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 ## Layout
 
 ```
-cage_lock/                main sketch: door + chain-lock status (band shows e.g. CLOSED & LOCKED), playlist per state, relay manual only (serial "unlock")
+cage_lock/                main sketch: door + chain-lock status (band shows e.g. CLOSED & LOCKED), playlist per state, relay via serial "unlock" or web PUT /unlock (API key)
 docs/wiring.html          wiring page (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse
