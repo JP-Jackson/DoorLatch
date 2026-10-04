@@ -30,7 +30,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 **2. CLOSED + UNLOCKED**
 - Reed LOW, Chain HIGH
 - Band: CLOSED & UNLOCKED, static
-- Screen: Closed but -> NOT -> LOCKED!
+- Screen: CLOSED / BUT / NOT / LOCKED! one huge word at a time
 - LED on
 
 **3. OPEN + UNLOCKED** (cage in use)

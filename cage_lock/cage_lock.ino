@@ -10,7 +10,7 @@
 //                      -> "Need something?" -> "Get A-1" (A-1 parks centered) -> "OR"
 //                      -> "Call Your Manager" slides in from the right
 //                      -> "Polk Production Technologies" (fades) -> repeat.
-//   CLOSED + UNLOCKED: "Closed but" -> "NOT" -> "LOCKED!" (inverted).
+//   CLOSED + UNLOCKED: "CLOSED" / "BUT" / "NOT" / "LOCKED!" one huge word at a time (inverted).
 //   OPEN + UNLOCKED:   "Close the Cage" -> JP unlock -> "CLOSE" / "THE" / "CAGE"
 //                      -> JP unlock -> repeat (inverted colors).
 //   OPEN + LOCKED:     "Chain is locked but door open!" (shouldn't happen).
@@ -66,7 +66,7 @@ const char OPEN_L1[] = "Close the";
 const char OPEN_L2[] = "Cage";
 const uint16_t WORD_MS = 700;        // "CLOSE" / "THE" / "CAGE" each
 const uint16_t LAST_WORD_MS = 1200;  // "CAGE" holds a bit longer
-const uint16_t NOTLOCKED_MS = 3400;  // "Closed but" / "NOT" / "LOCKED!" total
+const uint16_t NOTLOCKED_MS = 3*700 + 1200;  // CLOSED / BUT / NOT 0.7 s each, LOCKED! 1.2 s
 const uint16_t WARN_MS = 3000;       // open + locked message
 
 const int16_t BAND_H = 16, BLUE_Y = 16, BLUE_H = 48;
@@ -270,17 +270,29 @@ void drawOpenWords(uint32_t t) {
   else drawWord("CAGE", &FreeSansBold24pt7b, -2, 34);
 }
 
-// Closed but chain not locked: "Closed but" -> "NOT" -> "LOCKED!", inverted.
-// "LOCKED!" is 108 px in 12pt bold; anything bigger won't fit.
+// One word in the built-in font, 6x tall (42 px) and as wide as fits 128 px,
+// black on a lit area. Built-in glyphs are 5 px + 1 px gap per char.
+void drawBlockWord(const char *w) {
+  int16_t n = strlen(w);
+  int16_t sx = 128 / (6 * n - 1);
+  if (sx > 8) sx = 8;
+  int16_t width = n * 6 * sx - sx;
+  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
+  display.setFont(NULL);
+  display.setTextSize(sx, 6);
+  display.setTextColor(SSD1306_BLACK);
+  display.setCursor((128 - width) / 2, BLUE_Y + (BLUE_H - 42) / 2);
+  display.print(w);
+  display.setTextSize(1);
+}
+
+// Closed but chain not locked, one word at a time:
+// CLOSED (3x wide), BUT (7x), NOT (7x), LOCKED! (3x).
 void drawNotLocked(uint32_t t) {
-  if (t < 1200) {
-    display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-    drawMessage(&FreeSansBold12pt7b, "Closed", "but", 0, SSD1306_BLACK);
-  } else if (t < 1900) {
-    drawWord("NOT", &FreeSansBold24pt7b, 0, 34);
-  } else {
-    drawWord("LOCKED!", &FreeSansBold12pt7b, 0, 17);
-  }
+  if (t < 700) drawBlockWord("CLOSED");
+  else if (t < 1400) drawBlockWord("BUT");
+  else if (t < 2100) drawBlockWord("NOT");
+  else drawBlockWord("LOCKED!");
 }
 
 // Open but chain locked: shouldn't happen (chain locked with the door open).
