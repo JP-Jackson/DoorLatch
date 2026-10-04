@@ -1,0 +1,28 @@
+# Pre-render words in DejaVu Sans Bold at an exact cap height (pixel-aligned), 1-bit.
+from PIL import Image, ImageDraw, ImageFont
+import numpy as np
+PATH='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+def fontfor(cap):  # font size (at 4x) whose 'H' is exactly cap*4 tall
+  for s in range(8,400):
+    b=ImageFont.truetype(PATH,s).getbbox('H')
+    if b[3]-b[1]>=cap*4: return ImageFont.truetype(PATH,s)
+def render(t,cap,rows,th=0.35,sq=1.0):
+  F=fontfor(cap); hb=F.getbbox('H'); bb=F.getbbox(t)
+  W=bb[2]-bb[0]+8
+  im=Image.new('L',(W,rows*4),0)
+  ImageDraw.Draw(im).text((4-bb[0],-hb[1]),t,font=F,fill=255)  # cap top at row 0
+  w=max(1,round(W/4*sq)); im=im.resize((w*4,rows*4),Image.LANCZOS)
+  a=(np.array(im,dtype=np.float32)/255).reshape(rows,4,w,4).mean(axis=(1,3))>th
+  xs=np.where(a.any(0))[0]; return a[:,xs[0]:xs[-1]+1]
+def to_c(name,a,comment):
+  h,w=a.shape; bw=(w+7)//8; out=[f'const uint8_t {name}_W = {w}, {name}_H = {h};',f'const uint8_t {name}[] PROGMEM = {{ // {comment}']
+  for y in range(h):
+    row=[]
+    for k in range(bw):
+      v=0
+      for b in range(8):
+        x=k*8+b
+        if x<w and a[y,x]: v|=0x80>>b
+      row.append('0x%02X'%v)
+    out.append('  '+', '.join(row)+',')
+  out.append('};'); return '\n'.join(out)

@@ -51,6 +51,7 @@
 #include <ESP8266mDNS.h>
 #include "logo.h"
 #include "band_text.h"
+#include "company_text.h"
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -415,9 +416,9 @@ void drawMsgScene(uint32_t t) {
 }
 
 void drawCompany() {
-  // "P  O  L  K" in 12pt bold, letters spread evenly across 96 px, over
-  // "Production" / "Technologies" in 9pt bold (largest where "Technologies" fits).
-  // Baselines leave room for the "g" descender on the last line.
+  // "P  O  L  K" in 12pt bold, letters spread evenly across 96 px, with 3 px
+  // padding above and below, over smaller "Production" / "Technologies"
+  // (9 px caps, pre-rendered bold in company_text.h).
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
   display.setFont(&FreeSansBold12pt7b);
@@ -427,15 +428,16 @@ void drawCompany() {
     char c[2] = {P[i], 0};
     int16_t x1, y1;
     uint16_t w, h;
-    display.getTextBounds(c, 0, 33, &x1, &y1, &w, &h);
+    display.getTextBounds(c, 0, 36, &x1, &y1, &w, &h);
     int16_t cx = X0 + SPAN * i / 3;  // letter centers at 16, 48, 80, 112
-    display.setCursor(cx - (int16_t)w / 2 - x1, 33);
+    display.setCursor(cx - (int16_t)w / 2 - x1, 36);  // caps in rows 19-36
     display.print(c);
   }
-  display.setFont(&FreeSansBold9pt7b);
-  printCentered("Production", 46);
-  printCentered("Technologies", 59);
   display.setFont(NULL);
+  display.drawBitmap((128 - PRODUCTION_BMP_W) / 2, 40, PRODUCTION_BMP,
+                     PRODUCTION_BMP_W, PRODUCTION_BMP_H, SSD1306_WHITE);
+  display.drawBitmap((128 - TECHNOLOGIES_BMP_W) / 2, 51, TECHNOLOGIES_BMP,
+                     TECHNOLOGIES_BMP_W, TECHNOLOGIES_BMP_H, SSD1306_WHITE);
 }
 
 void drawOpenMsg() {
