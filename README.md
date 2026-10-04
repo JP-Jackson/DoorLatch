@@ -21,12 +21,29 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 
 ## Status table (cage_lock)
 
-| Door reed (D7) | Chain feedback (D6) | State | Yellow band (swaps every 1 s) | Band style | Blue area loop | On-board LED | Serial |
-|---|---|---|---|---|---|---|---|
-| LOW (magnet on) | LOW (contact closed) | **CLOSED + LOCKED** (normal) | CLOSED / LOCKED | Static; normal one loop, inverted the next | JP lock slides in, shackle drops, padlock rattles -> Need something? -> Get A-1 (A-1 parks) -> OR -> Call Your Manager slides in -> Polk / Production / Technologies (fades) | On | `CLOSED - LOCKED` |
-| LOW (magnet on) | HIGH (contact open) | **CLOSED + UNLOCKED** | CLOSED / UNLOCKED | Same as above | Closed / but -> NOT -> LOCKED! (lit background) | On | `CLOSED - UNLOCKED` |
-| HIGH (magnet off) | HIGH (contact open) | **OPEN + UNLOCKED** (cage in use) | OPEN / UNLOCKED | Flashes normal/inverted every 0.3 s | Close the / Cage -> JP unlock (shackle rises, wiggles) -> CLOSE / THE / CAGE -> JP unlock (lit background) | Off | `OPEN - UNLOCKED` |
-| HIGH (magnet off) | LOW (contact closed) | **OPEN + LOCKED** (shouldn't happen) | OPEN / LOCKED | Flashes normal/inverted every 0.3 s | Chain is / locked but / door open! (lit background) | Off | `OPEN - LOCKED` |
+**1. CLOSED + LOCKED** (normal)
+- Reed LOW, Chain LOW
+- Band: CLOSED / LOCKED, static (normal one loop, inverted the next)
+- Screen: JP lock -> Need something? -> Get A-1 -> OR -> Call Your Manager -> Polk
+- LED on
+
+**2. CLOSED + UNLOCKED**
+- Reed LOW, Chain HIGH
+- Band: CLOSED / UNLOCKED, static
+- Screen: Closed but -> NOT -> LOCKED!
+- LED on
+
+**3. OPEN + UNLOCKED** (cage in use)
+- Reed HIGH, Chain HIGH
+- Band: OPEN / UNLOCKED, flashing
+- Screen: Close the Cage -> JP unlock -> CLOSE / THE / CAGE -> JP unlock
+- LED off
+
+**4. OPEN + LOCKED** (shouldn't happen)
+- Reed HIGH, Chain LOW
+- Band: OPEN / LOCKED, flashing
+- Screen: Chain is locked but door open!
+- LED off
 
 - Both inputs use the internal pull-up: LOW = switch closed to GND. A disconnected wire reads HIGH (OPEN / UNLOCKED).
 - Any input change restarts that state's loop and resets the band to the door word.
