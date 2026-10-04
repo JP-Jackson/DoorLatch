@@ -16,8 +16,13 @@
 //                      -> JP unlock -> repeat (inverted colors).
 //   OPEN + LOCKED:     "Chain is locked but door open!" (shouldn't happen).
 // On-board LED mirrors the reed: on = closed.
-// WiFi: joins the network in secrets.h in the background (display and inputs keep
-//   running if it's down). The band alternates the state text with
+// WiFi: joins the last network saved from the setup portal, or secrets.h if none was
+//   saved, in the background (display and inputs keep running if it's down).
+//   Setup hotspot: if WiFi isn't connected 30 s after boot (60 s after a drop), it
+//   starts hotspot "CageLock" (password AP_PASS) with a setup page to pick a network.
+//   Band alternates state / "WiFi SETUP MODE" / "Join WiFi: CageLock". With no one
+//   on the hotspot it retries saved WiFi every 5 min. Serial "wifireset" forgets
+//   the saved network and reboots (back to secrets.h). The band alternates the state text with
 //   "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD" or "NO WIFI". mDNS name: cagelock.local
 // Web page: http://cagelock.local/ shows live status, a name box and an Unlock
 //   button. The API key is typed into the page once and kept in that browser.
@@ -39,7 +44,7 @@
 // Serial is ignored for the first 3 s after boot so noise can't trigger it.
 // Boot/power loss: D5 (GPIO14) is high-impedance until setup() drives it HIGH,
 // so the relay stays off through reset, brownout and power-up.
-// Libraries: Adafruit SSD1306, Adafruit GFX Library.
+// Libraries: Adafruit SSD1306, Adafruit GFX Library, WiFiManager (tzapu).
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -51,6 +56,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
+#include <WiFiManager.h>
 #include "logo.h"
 #include "band_text.h"
 #include "company_text.h"
@@ -60,7 +66,18 @@
 #error "Copy secrets.h.example to cage_lock/secrets.h and fill in WIFI_SSID, WIFI_PASS, API_KEY"
 #endif
 
+#ifndef AP_PASS
+#define AP_PASS "cagelock"  // set your own in secrets.h (8+ chars)
+#endif
+
 const char HOSTNAME[] = "cagelock";
+const char AP_NAME[] = "CageLock";
+const uint32_t PORTAL_AFTER_BOOT_MS = 30000;  // no WiFi this long after boot -> hotspot
+const uint32_t PORTAL_AFTER_DROP_MS = 60000;  // ...or this long after a drop
+const uint32_t PORTAL_RETRY_MS = 300000;      // idle hotspot steps aside to retry WiFi
+WiFiManager wm;
+bool serverUp = false, everConnected = false;
+uint32_t wifiDownSince = 0, portalSince = 0;
 ESP8266WebServer server(80);
 bool mdnsStarted = false;
 bool wifiWasUp = false;
@@ -207,6 +224,9 @@ void drawTitle() {
     // Web/serial unlock: alternate the two phrases until the relay fires.
     t = seqFired ? "UNLOCKED"
         : ((millis() - seqStart) / SEQ_BAND_SWAP_MS) % 2 ? "Please standby" : "Unlocking remotely";
+  } else if (wm.getConfigPortalActive() && (millis() / 2000) % 3) {
+    // Setup hotspot running: state, then the two setup lines, 2 s each.
+    t = (millis() / 2000) % 3 == 1 ? "WiFi SETUP MODE" : "Join WiFi: CageLock";
   } else if (millis() % WIFI_EVERY_MS < WIFI_SHOW_MS) {
     int8_t bars = wifiBars();
     if (bars < 0) strcpy(wifiText, "NO WIFI");
@@ -671,6 +691,12 @@ void serviceSerial() {
     if (millis() < SERIAL_IGNORE_MS) { len = 0; continue; }
     if (c == '\n' || c == '\r') {
       buf[len] = 0;
+      if (len && strcmp(buf, "wifireset") == 0) {
+        Serial.println(F("Forgetting saved WiFi, rebooting"));
+        wm.resetSettings();
+        delay(200);
+        ESP.restart();
+      }
       if (len && strcmp(buf, "unlock") == 0) startUnlockSeq("");
       else if (len && strncmp(buf, "unlock ", 7) == 0) startUnlockSeq(buf + 7);
       len = 0;
@@ -760,8 +786,17 @@ void setupWeb() {
   WiFi.mode(WIFI_STA);
   WiFi.hostname(HOSTNAME);
   WiFi.setAutoReconnect(true);
-  WiFi.persistent(false);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);  // non-blocking; loop() carries on
+  WiFi.persistent(true);  // networks picked in the setup portal are remembered
+  // Saved network (from the portal) wins; secrets.h is the first-boot default.
+  if (WiFi.SSID().length()) WiFi.begin();
+  else WiFi.begin(WIFI_SSID, WIFI_PASS);  // non-blocking; loop() carries on
+  wifiDownSince = millis();
+
+  wm.setConfigPortalBlocking(false);   // display and inputs keep running
+  wm.setTitle("Cage Lock WiFi setup");
+  wm.setShowInfoUpdate(false);         // no firmware upload from the hotspot
+  const char *menu[] = {"wifi", "exit"};
+  wm.setMenu(menu, 2);
 
   const char *keys[] = {"X-Api-Key"};
   server.collectHeaders(keys, 1);
@@ -771,21 +806,51 @@ void setupWeb() {
   server.on("/status", HTTP_OPTIONS, handlePreflight);
   server.on("/unlock", HTTP_OPTIONS, handlePreflight);
   server.onNotFound([]() { sendCors(); server.send(404, "text/plain", "not found"); });
-  server.begin();
+  // server.begin() happens once WiFi is up; the setup portal needs port 80 otherwise.
+}
+
+void startPortal() {
+  if (serverUp) { server.stop(); serverUp = false; }
+  Serial.print(F("No WiFi - starting setup hotspot "));
+  Serial.println(AP_NAME);
+  wm.startConfigPortal(AP_NAME, AP_PASS);
+  portalSince = millis();
 }
 
 void serviceWeb() {
   bool up = WiFi.status() == WL_CONNECTED;
   if (up && !wifiWasUp) {
-    Serial.print(F("WiFi connected, IP "));
+    Serial.print(F("WiFi connected to "));
+    Serial.print(WiFi.SSID());
+    Serial.print(F(", IP "));
     Serial.println(WiFi.localIP());
+    if (wm.getConfigPortalActive()) wm.stopConfigPortal();
+    WiFi.mode(WIFI_STA);
     if (!mdnsStarted) mdnsStarted = MDNS.begin(HOSTNAME);
+    if (!serverUp) { server.begin(); serverUp = true; }
+    everConnected = true;
   } else if (!up && wifiWasUp) {
     Serial.println(F("WiFi lost"));
+    wifiDownSince = millis();
   }
   wifiWasUp = up;
+
+  if (wm.getConfigPortalActive()) {
+    wm.process();
+    // Nobody on the hotspot for a while: step aside and retry the saved WiFi.
+    if (millis() - portalSince >= PORTAL_RETRY_MS && WiFi.softAPgetStationNum() == 0) {
+      Serial.println(F("Setup hotspot idle - retrying saved WiFi"));
+      wm.stopConfigPortal();
+      WiFi.mode(WIFI_STA);
+      WiFi.begin();
+      wifiDownSince = millis();
+    }
+  } else if (!up && millis() - wifiDownSince >= (everConnected ? PORTAL_AFTER_DROP_MS : PORTAL_AFTER_BOOT_MS)) {
+    startPortal();
+  }
+
   if (mdnsStarted) MDNS.update();
-  server.handleClient();
+  if (serverUp) server.handleClient();
 }
 
 // ---------- main ----------

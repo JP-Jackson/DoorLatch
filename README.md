@@ -52,7 +52,9 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 
 ## WiFi + web API (cage_lock)
 
-Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) with WIFI_SSID, WIFI_PASS (2.4 GHz) and API_KEY. Change it and reflash when moving networks.
+Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) with WIFI_SSID, WIFI_PASS (2.4 GHz), API_KEY and AP_PASS.
+
+**Setup hotspot (no reflash needed to change WiFi):** if WiFi isn't connected 30 s after boot (60 s after a drop), the lock starts hotspot **CageLock** (password = AP_PASS). Join it on a phone, the setup page pops up (or browse to http://192.168.4.1), pick the network, save. It's remembered across reboots and wins over secrets.h. The band shows "WiFi SETUP MODE" / "Join WiFi: CageLock". With nobody on the hotspot it retries the saved WiFi every 5 min. Serial `wifireset` forgets the saved network and goes back to secrets.h. The unlock page/API are offline while the hotspot is up.
 
 - `GET http://cagelock.local/status` -> `{"door":"closed","chain":"locked","state":"CLOSED & LOCKED","rssi":-61,"relay":false}`
 - `http://cagelock.local/` -> simple page: live status, name box, Unlock button (API key entered once, saved in that browser).
@@ -95,7 +97,7 @@ secrets.h.example         copy to secrets.h (gitignored) for WiFi creds
 ```sh
 arduino-cli config add board_manager.additional_urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
 arduino-cli core update-index && arduino-cli core install esp8266:esp8266
-arduino-cli lib install "Adafruit SSD1306" "Adafruit GFX Library"
+arduino-cli lib install "Adafruit SSD1306" "Adafruit GFX Library" "WiFiManager"
 
 FQBN=esp8266:esp8266:nodemcuv2
 arduino-cli compile -b $FQBN tests/relay_test
