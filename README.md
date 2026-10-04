@@ -58,7 +58,6 @@ Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) wit
 - `http://cagelock.local/` -> simple page: live status, name box, Unlock button (API key entered once, saved in that browser).
 - `PUT http://cagelock.local/unlock?name=JP` with header `X-Api-Key: <API_KEY>` -> unlock sequence: "Unlocking the Cage" / "for" / name scrolls (24pt bold, any length) / "in" / 3 / 2 / 1 -> relay pulse -> "UNLOCKED". Name optional (max 32 chars; long names scroll faster, 5 s max). 202 accepted (`fires_in_ms`), 401 bad key, 409 busy.
 - Serial: `unlock` or `unlock JP` runs the same sequence.
-- QR screen in the CLOSED & LOCKED loop: JP's contact card (vCard) in the blue area, band reads "Need JP" (2 s) then "SCAN ME". `QR_URL` in secrets.h replaces the contact card if set.
 - CORS open for a browser web app. Band shows WiFi bars at the right; blinking X = not connected.
 
 PowerShell test:
@@ -96,7 +95,7 @@ secrets.h.example         copy to secrets.h (gitignored) for WiFi creds
 ```sh
 arduino-cli config add board_manager.additional_urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
 arduino-cli core update-index && arduino-cli core install esp8266:esp8266
-arduino-cli lib install "Adafruit SSD1306" "Adafruit GFX Library" "QRCode"
+arduino-cli lib install "Adafruit SSD1306" "Adafruit GFX Library"
 
 FQBN=esp8266:esp8266:nodemcuv2
 arduino-cli compile -b $FQBN tests/relay_test

@@ -9,8 +9,6 @@
 //   CLOSED + LOCKED:   JP + padlock slides in from the right, locks, padlock rattles
 //                      -> "Need something?" -> "Get A-1" (A-1 parks centered) -> "OR"
 //                      -> "Call Your Manager" slides in from the right
-//                      -> QR code in the blue area (JP's contact vCard, or QR_URL from
-//                         secrets.h if set), band reads "Need JP" then "SCAN ME"
 //                      -> "Polk Production Technologies" (fades) -> repeat.
 //   CLOSED + UNLOCKED: "CLOSED" / "BUT" / "NOT" / "LOCKED!" one huge word at a time (inverted).
 //   OPEN + UNLOCKED:   "Close the Cage" -> JP unlock -> "CLOSE" / "THE" / "CAGE"
@@ -38,7 +36,7 @@
 // Serial is ignored for the first 3 s after boot so noise can't trigger it.
 // Boot/power loss: D5 (GPIO14) is high-impedance until setup() drives it HIGH,
 // so the relay stays off through reset, brownout and power-up.
-// Libraries: Adafruit SSD1306, Adafruit GFX Library, QRCode (Richard Moore).
+// Libraries: Adafruit SSD1306, Adafruit GFX Library.
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -51,7 +49,6 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include "logo.h"
-#include <qrcode.h>
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -122,8 +119,8 @@ uint32_t tTimer = 0;
 // Blue area: play the current playlist; Polk fades, everything else cuts.
 enum BluePhase { B_IN, B_HOLD, B_OUT, B_GAP };
 BluePhase bPhase = B_IN;
-enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENWORDS, I_NOTLOCKED, I_WARN, I_QR };
-const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_QR, I_POLK};    // closed + locked
+enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENWORDS, I_NOTLOCKED, I_WARN };
+const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_POLK};          // closed + locked
 const uint8_t NAG_LIST[] = {I_NOTLOCKED};                       // closed + unlocked
 const uint8_t OPEN_LIST[] = {I_OPENMSG, I_UNLOCK, I_OPENWORDS, I_UNLOCK};  // open + unlocked
 const uint8_t WARN_LIST[] = {I_WARN};                           // open + locked
@@ -196,11 +193,9 @@ void drawWifiIcon(uint16_t fg) {
   }
 }
 
-bool qrShowing();
-const char *qrBandText();
 
 void drawTitle() {
-  const char *t = qrShowing() ? qrBandText() : titleText();
+  const char *t = titleText();
   int16_t w = titleWidth(t);
   bool inv = isOpen() ? flashInv : closedInv;
   display.setFont(NULL);
@@ -436,56 +431,6 @@ void applyFade(uint8_t level) {
       if (BAYER[y & 3][x & 3] >= level) display.drawPixel(x, y, SSD1306_BLACK);
 }
 
-// ---------- QR code ----------
-
-const uint16_t QR_MS = 6000;
-// Contact card (minimal vCard: QR version 6, 41x41 modules). QR_URL in
-// secrets.h replaces it if defined.
-const char CONTACT_VCARD[] =
-  "BEGIN:VCARD\nVERSION:3.0\nN:Jackson;JP\n"
-  "ORG:Polk Production Technologies, Inc.\n"
-  "TEL:361-649-1942\nEMAIL:jp@polkproduction.com\nEND:VCARD";
-QRCode qr;
-uint8_t qrBuf[254];          // up to version 7: 45x45 modules = 254 bytes
-bool qrOk = false;
-bool qrBuilt = false;
-
-void buildQr() {
-  if (qrBuilt) return;
-  qrBuilt = true;
-#ifdef QR_URL
-  const char *want = QR_URL;
-#else
-  const char *want = CONTACT_VCARD;
-#endif
-  // The library doesn't check capacity: handing it a version that's too small
-  // overflows its stack buffers and crashes. Pick the version up front from the
-  // byte-mode capacity at ECC_LOW (versions 1-7).
-  static const uint8_t CAP[] = {17, 32, 53, 78, 106, 134, 154};
-  size_t len = strlen(want);
-  for (uint8_t v = 1; v <= 7; v++) {
-    if (len <= CAP[v - 1]) {
-      qrOk = qrcode_initText(&qr, qrBuf, v, ECC_LOW, want) == 0;
-      break;
-    }
-  }
-  Serial.print(F("QR "));
-  Serial.println(qrOk ? "ready" : "text too long (max ~150 chars)");
-}
-
-// QR in the blue area only: white 48x48 square (quiet zone) centered, one
-// pixel per module. Fractional scaling to fill the space didn't scan reliably.
-void drawQr() {
-  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_BLACK);
-  display.fillRect(40, BLUE_Y, 48, 48, SSD1306_WHITE);
-  if (!qrOk) return;
-  int16_t m = qr.size <= 24 ? 2 : 1;  // version 1 (21) can use 2 px
-  int16_t ox = 40 + (48 - qr.size * m) / 2, oy = BLUE_Y + (48 - qr.size * m) / 2;
-  for (uint8_t y = 0; y < qr.size; y++)
-    for (uint8_t x = 0; x < qr.size; x++)
-      if (qrcode_getModule(&qr, x, y)) display.fillRect(ox + x * m, oy + y * m, m, m, SSD1306_BLACK);
-}
-
 // ---------- unlock sequence ----------
 
 void startPlaylist();
@@ -587,11 +532,6 @@ void serviceSeq() {
   }
 }
 
-bool qrShowing() { return !seqActive && item == I_QR && bPhase != B_GAP; }
-// Band during the QR screen: "Need JP" first, then "SCAN ME".
-const uint16_t QR_NEED_MS = 2000;
-const char *qrBandText() { return millis() - bTimer < QR_NEED_MS ? "Need JP" : "SCAN ME"; }
-
 bool itemFades(uint8_t i) { return i == I_POLK; }
 
 uint16_t itemHoldMs(uint8_t i) {
@@ -603,7 +543,6 @@ uint16_t itemHoldMs(uint8_t i) {
     case I_OPENWORDS: return 2 * WORD_MS + LAST_WORD_MS;
     case I_NOTLOCKED: return NOTLOCKED_MS;
     case I_WARN: return WARN_MS;
-    case I_QR: return QR_MS;
     default: return OPEN_MSG_MS;
   }
 }
@@ -655,7 +594,6 @@ void drawBlue() {
       case I_OPENWORDS: drawOpenWords(t); break;
       case I_NOTLOCKED: drawNotLocked(t); break;
       case I_WARN: drawWarn(); break;
-      case I_QR: drawQr(); break;
     }
     applyFade(fadeLevel);
   }
@@ -904,7 +842,6 @@ void loop() {
 
   if (millis() - lastFrame >= FRAME_MS) {
     lastFrame = millis();
-    buildQr();    // once
     drawBlue();   // first, so the band covers anything that slid above row 16
     drawTitle();
     display.display();
