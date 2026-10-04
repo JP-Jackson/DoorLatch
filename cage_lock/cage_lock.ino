@@ -416,28 +416,9 @@ void drawMsgScene(uint32_t t) {
 }
 
 void drawCompany() {
-  // "P  O  L  K" in 12pt bold, letters spread evenly across 96 px, with 3 px
-  // padding above and below, over smaller "Production" / "Technologies"
-  // (9 px caps, pre-rendered bold in company_text.h).
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setFont(&FreeSansBold12pt7b);
-  const char *P = "POLK";
-  const int16_t SPAN = 96, X0 = (128 - SPAN) / 2;
-  for (uint8_t i = 0; i < 4; i++) {
-    char c[2] = {P[i], 0};
-    int16_t x1, y1;
-    uint16_t w, h;
-    display.getTextBounds(c, 0, 36, &x1, &y1, &w, &h);
-    int16_t cx = X0 + SPAN * i / 3;  // letter centers at 16, 48, 80, 112
-    display.setCursor(cx - (int16_t)w / 2 - x1, 36);  // caps in rows 19-36
-    display.print(c);
-  }
-  display.setFont(NULL);
-  display.drawBitmap((128 - PRODUCTION_BMP_W) / 2, 40, PRODUCTION_BMP,
-                     PRODUCTION_BMP_W, PRODUCTION_BMP_H, SSD1306_WHITE);
-  display.drawBitmap((128 - TECHNOLOGIES_BMP_W) / 2, 51, TECHNOLOGIES_BMP,
-                     TECHNOLOGIES_BMP_W, TECHNOLOGIES_BMP_H, SSD1306_WHITE);
+  // PRODUCTION / P O L K / TECHNOLOGIES, one pre-rendered 128x48 bitmap
+  // (company_text.h) laid out like the Polk logo, all lines the same width.
+  display.drawBitmap(0, BLUE_Y, COMPANY_BMP, COMPANY_BMP_W, COMPANY_BMP_H, SSD1306_WHITE);
 }
 
 void drawOpenMsg() {

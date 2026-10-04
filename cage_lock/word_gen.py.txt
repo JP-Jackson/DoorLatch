@@ -26,3 +26,34 @@ def to_c(name,a,comment):
       row.append('0x%02X'%v)
     out.append('  '+', '.join(row)+',')
   out.append('};'); return '\n'.join(out)
+
+# Hand-drawn glyphs where the renderer is ambiguous at small sizes (7 px caps).
+HAND={('S',7):[".####","##...","##...",".###.","...##","...##","####."]}
+def glyph(c,cap,rows,th):
+  if (c,cap) in HAND and rows==cap:
+    return np.array([[ch=='#' for ch in r] for r in HAND[(c,cap)]])
+  return render(c,cap,rows,th)
+
+def render_justified(t,cap,rows,width,th=0.35):
+  # Each letter rendered on its own, then spread so the word spans exactly `width` px.
+  gl=[glyph(c,cap,rows,th) for c in t]
+  total=sum(g.shape[1] for g in gl); gaps=len(gl)-1
+  extra=width-total
+  a=np.zeros((rows,width),bool); x=0
+  for i,g in enumerate(gl):
+    a[:,x:x+g.shape[1]]|=g
+    x+=g.shape[1]+(extra*(i+1)//gaps-extra*i//gaps if i<gaps else 0)
+  return a
+
+def company_screen():
+  # PRODUCTION / P O L K / TECHNOLOGIES, all three lines the same width as the POLK block.
+  def polk(cap,top,span):
+    return [(render(c,cap,cap),top,64-span//2+span*i//3) for i,c in enumerate('POLK')]
+  def screen(parts):
+    a=np.zeros((64,128),bool)
+    for bm,top,xs in parts:
+      h,w=bm.shape; x=(128-w)//2 if xs is None else xs-w//2; a[top:top+h,x:x+w]|=bm
+    return a
+  P=polk(22,29,96)
+  cols=np.where(screen(P).any(0))[0]; W=cols[-1]-cols[0]+1
+  return screen([(render_justified('PRODUCTION',7,7,W),19,None)]+P+[(render_justified('TECHNOLOGIES',7,7,W),55,None)])[16:64]
