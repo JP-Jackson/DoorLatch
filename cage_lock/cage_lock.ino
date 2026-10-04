@@ -9,8 +9,8 @@
 //   CLOSED + LOCKED:   JP + padlock slides in from the right, locks, padlock rattles
 //                      -> "Need something?" -> "Get A-1" (A-1 parks centered) -> "OR"
 //                      -> "Call Your Manager" slides in from the right
-//                      -> QR code + "SCAN ME" (full screen, band hidden; QR_URL in
-//                         secrets.h, else this lock's own page by IP)
+//                      -> QR code (JP's contact vCard, or QR_URL from secrets.h if set)
+//                         + Polk logo + "SCAN ME" (full screen, band hidden)
 //                      -> "Polk Production Technologies" (fades) -> repeat.
 //   CLOSED + UNLOCKED: "CLOSED" / "BUT" / "NOT" / "LOCKED!" one huge word at a time (inverted).
 //   OPEN + UNLOCKED:   "Close the Cage" -> JP unlock -> "CLOSE" / "THE" / "CAGE"
@@ -52,6 +52,7 @@
 #include <ESP8266mDNS.h>
 #include "logo.h"
 #include <qrcode.h>
+#include "polk_logo.h"
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -435,56 +436,54 @@ void applyFade(uint8_t level) {
 
 // ---------- QR code ----------
 
-const uint16_t QR_MS = 5000;
+const uint16_t QR_MS = 6000;
+// Contact card (minimal vCard: QR version 6, 41x41 modules). QR_URL in
+// secrets.h replaces it if defined.
+const char CONTACT_VCARD[] =
+  "BEGIN:VCARD\nVERSION:3.0\nN:Jackson;JP\n"
+  "ORG:Polk Production Technologies, Inc.\n"
+  "TEL:361-649-1942\nEMAIL:jp@polkproduction.com\nEND:VCARD";
 QRCode qr;
-uint8_t qrBuf[137];          // version 4: 33x33 modules = 137 bytes
+uint8_t qrBuf[254];          // up to version 7: 45x45 modules = 254 bytes
 bool qrOk = false;
-String qrText;
+bool qrBuilt = false;
 
-// Builds the QR for QR_URL (secrets.h) or, if unset, http://<this lock's IP>/.
-// Picks the smallest version 1-4 that fits; 1-3 draw at 2 px per module.
 void buildQr() {
+  if (qrBuilt) return;
+  qrBuilt = true;
 #ifdef QR_URL
-  String want = QR_URL;
+  const char *want = QR_URL;
 #else
-  String want = WiFi.status() == WL_CONNECTED ? String("http://") + WiFi.localIP().toString() + "/" : "";
+  const char *want = CONTACT_VCARD;
 #endif
-  if (want == qrText && (qrOk || want.length() == 0)) return;
-  qrText = want;
-  qrOk = false;
-  if (want.length() == 0) return;
-  for (uint8_t v = 1; v <= 4 && !qrOk; v++)
-    qrOk = qrcode_initText(&qr, qrBuf, v, ECC_LOW, want.c_str()) == 0;
-  Serial.print(F("QR: "));
-  Serial.println(qrOk ? want.c_str() : "too long (max 78 chars)");
+  for (uint8_t v = 1; v <= 7 && !qrOk; v++)
+    qrOk = qrcode_initText(&qr, qrBuf, v, ECC_LOW, want) == 0;
+  Serial.print(F("QR "));
+  Serial.println(qrOk ? "ready" : "text too long (max ~150 chars)");
 }
 
-// Full screen: white square with the QR on the left, "SCAN ME" on the right.
+// Full screen: QR on a white 64x64 square at left (modules scaled to fill
+// 62 px, uneven 1-2 px steps are fine for scanners), Polk logo + "SCAN ME" right.
 void drawQr() {
   display.fillRect(0, 0, 128, 64, SSD1306_BLACK);
-  if (!qrOk) {
-    drawMessage(&FreeSansBold12pt7b, "No WiFi", "yet", 0, SSD1306_WHITE);
-    return;
-  }
-  int16_t m = qr.size <= 29 ? 2 : 1;  // px per module
-  int16_t px = qr.size * m;
-  int16_t ox = (64 - px) / 2, oy = (64 - px) / 2;
   display.fillRect(0, 0, 64, 64, SSD1306_WHITE);  // quiet zone
-  for (uint8_t y = 0; y < qr.size; y++)
-    for (uint8_t x = 0; x < qr.size; x++)
-      if (qrcode_getModule(&qr, x, y)) display.fillRect(ox + x * m, oy + y * m, m, m, SSD1306_BLACK);
-  display.setFont(&FreeSansBold12pt7b);
+  if (qrOk) {
+    const int16_t AREA = 62, OFS = 1;
+    for (uint8_t y = 0; y < qr.size; y++) {
+      int16_t y0 = OFS + y * AREA / qr.size, y1 = OFS + (y + 1) * AREA / qr.size;
+      for (uint8_t x = 0; x < qr.size; x++) {
+        if (!qrcode_getModule(&qr, x, y)) continue;
+        int16_t x0 = OFS + x * AREA / qr.size, x1 = OFS + (x + 1) * AREA / qr.size;
+        display.fillRect(x0, y0, x1 - x0, y1 - y0, SSD1306_BLACK);
+      }
+    }
+  }
+  display.drawBitmap(64, 0, POLK_BMP, POLK_W, POLK_H, SSD1306_WHITE);
+  display.setFont(NULL);
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  int16_t x1, y1;
-  uint16_t w, h;
-  display.getTextBounds("SCAN", 0, 0, &x1, &y1, &w, &h);
-  display.setCursor(64 + (64 - w) / 2 - x1, 28);
-  display.print("SCAN");
-  display.getTextBounds("ME", 0, 0, &x1, &y1, &w, &h);
-  display.setCursor(64 + (64 - w) / 2 - x1, 52);
-  display.print("ME");
-  display.setFont(NULL);
+  display.setCursor(64 + (64 - 41) / 2, 54);  // "SCAN ME" = 41 px
+  display.print("SCAN ME");
 }
 
 // ---------- unlock sequence ----------
@@ -902,7 +901,7 @@ void loop() {
 
   if (millis() - lastFrame >= FRAME_MS) {
     lastFrame = millis();
-    buildQr();    // cheap unless the URL/IP changed
+    buildQr();    // once
     drawBlue();   // first, so the band covers anything that slid above row 16
     if (!qrShowing()) drawTitle();  // QR uses the full screen
     display.display();
