@@ -1,5 +1,5 @@
 // Cage Lock main sketch.
-// Inputs: door reed D7 (LOW = closed), chain lock feedback D6 dry contact (LOW = locked).
+// Inputs: door switch D7 (LOW = closed), chain lock feedback D6 dry contact (LOW = locked).
 // The lock is a chain around the door, separate from the door itself.
 // Yellow band (rows 0-15): combined state, e.g. "CLOSED & LOCKED", centered, in
 //   bold bitmaps pre-rendered from DejaVu Sans Bold (band_text.h, band_gen.py.txt),
@@ -15,7 +15,7 @@
 //   OPEN + UNLOCKED:   "Close the Cage" -> JP unlock -> "CLOSE" / "THE" / "CAGE"
 //                      -> JP unlock -> repeat (inverted colors).
 //   OPEN + LOCKED:     "Chain is locked but door open!" (shouldn't happen).
-// On-board LED mirrors the reed: on = closed.
+// On-board LED mirrors the door: on = closed.
 // WiFi: joins the last network saved from the setup portal, or secrets.h if none was
 //   saved, in the background (display and inputs keep running if it's down).
 //   Setup hotspot: if WiFi isn't connected 30 s after boot (60 s after a drop), it
@@ -32,10 +32,14 @@
 //   is up (TZ_INFO, US Central); before that epoch is 0 and local_time blank.
 //   Events: boot, door, chain, unlock_request, unlock_denied, relay_pulse,
 //   wifi_connected, wifi_lost, setup_hotspot, wifi_setup_request, time_sync.
+//   Details are key=value;key=value, e.g. unlock_request "src=web;for=JP;by=Tony",
+//   door "open;for=JP;by=Tony" (unlock within 2 min) and
+//   door "closed;open_s=192;for=JP;by=Tony".
 // Web API (port 80):
 //   GET /status  -> {"door":"closed","chain":"locked","state":"CLOSED & LOCKED",
 //                    "rssi":-61,"relay":false}
-//   PUT /unlock?name=JP -> runs the unlock sequence (name optional, max 32 chars).
+//   PUT /unlock?name=JP&by=Tony -> runs the unlock sequence. name = who it's opened
+//                   for (shown on screen), by = who's unlocking; both optional, 32 chars.
 //                   Needs header "X-Api-Key: <API_KEY>". 202 accepted (relay fires
 //                   at the end of the countdown), 401 bad/missing key, 409 busy.
 //   PUT /wifisetup -> (key) switch to the CageLock setup hotspot. 202.
@@ -107,7 +111,7 @@ bool timeValid() { return time(nullptr) > 1700000000; }  // NTP has synced
 
 // One CSV line to flash (and serial). Commas/quotes/newlines in detail become spaces.
 void logEvent(const char *event, const char *detail = "") {
-  char clean[80];
+  char clean[120];
   uint8_t n = 0;
   for (; *detail && n < sizeof(clean) - 1; detail++)
     clean[n++] = (*detail == ',' || *detail == '"' || *detail == '\n' || *detail == '\r') ? ' ' : *detail;
@@ -120,7 +124,7 @@ void logEvent(const char *event, const char *detail = "") {
     localtime_r(&now, &t);
     strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &t);
   }
-  char line[160];
+  char line[200];
   snprintf(line, sizeof(line), "%ld,%s,%lu,%s,%s\n", ok ? (long)now : 0L, ts,
            (unsigned long)(millis() / 1000), event, clean);
   Serial.print(F("LOG "));
@@ -154,7 +158,7 @@ ESP8266WebServer server(80);
 bool mdnsStarted = false;
 bool wifiWasUp = false;
 
-const uint8_t REED_PIN = D7;         // door reed to GND, LOW = closed
+const uint8_t DOOR_PIN = D7;         // door switch to GND, LOW = closed
 const uint8_t LOCK_PIN = D6;         // chain lock feedback, dry contact to GND, closed when locked
 const uint8_t LOCKED_LEVEL = LOW;
 const uint8_t LED_PIN = LED_BUILTIN; // D4/GPIO2, active LOW
@@ -199,12 +203,12 @@ const uint8_t BAYER[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 
 
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 
-int reedStable = -1, reedLast = -1;
+int doorStable = -1, doorLast = -1;
 int lockStable = -1, lockLast = -1;
 uint32_t lockChange = 0;
 bool relayActive = false;
 uint32_t relayOnAt = 0, relayOffAt = 0;
-uint32_t reedChange = 0, lastFrame = 0;
+uint32_t doorChange = 0, lastFrame = 0;
 
 bool flashInv = false;
 uint32_t tTimer = 0;
@@ -222,7 +226,7 @@ uint8_t item = I_LOCK;
 uint8_t fadeLevel = 0;               // 0 = blank, 16 = fully drawn
 uint32_t bTimer = 0;
 
-bool isOpen() { return reedStable == HIGH; }
+bool isOpen() { return doorStable == HIGH; }
 bool isLocked() { return lockStable == LOCKED_LEVEL; }
 const char *titleText() {
   if (isOpen()) return isLocked() ? "OPEN & LOCKED" : "OPEN & UNLOCKED";
@@ -597,7 +601,12 @@ uint16_t seqNameMs = 0;
 const uint16_t SEQ_COUNT_MS = 600, SEQ_DONE_MS = 2000;
 bool seqActive = false, seqFired = false;
 uint32_t seqStart = 0;
-char seqName[33] = "";               // up to 32 chars
+char seqName[33] = "";               // who it's opened for (shown), up to 32 chars
+char seqBy[33] = "";                 // who unlocked it remotely
+// Door-open attribution: an unlock within DOOR_ATTRIB_MS of the door opening.
+const uint32_t DOOR_ATTRIB_MS = 120000;
+uint32_t lastPulseAt = 0, doorOpenedAt = 0;
+char lastFor[33] = "", lastBy[33] = "", openFor[33] = "", openBy[33] = "";
 
 uint32_t seqFireAt() {
   uint32_t t = 3 * SEQ_WORD_MS;                  // "Unlocking", "the", "Cage"
@@ -606,20 +615,25 @@ uint32_t seqFireAt() {
 }
 
 // Keep printable ASCII, trim, max 32 chars.
-void setSeqName(const char *n) {
-  uint8_t len = 0;
+// Copy a name: printable ASCII, trimmed, max 32 chars. Separators used in the
+// log (, ; = ") become spaces so the detail column stays parseable.
+void cleanName(char *dst, size_t cap, const char *n) {
+  size_t len = 0;
   while (*n == ' ') n++;
-  for (; *n && len < sizeof(seqName) - 1; n++)
-    if (*n >= 32 && *n <= 126) seqName[len++] = *n;
-  while (len && seqName[len - 1] == ' ') len--;
-  seqName[len] = 0;
+  for (; *n && len < cap - 1; n++)
+    if (*n >= 32 && *n <= 126) dst[len++] = (*n == ',' || *n == ';' || *n == '=' || *n == '"') ? ' ' : *n;
+  while (len && dst[len - 1] == ' ') len--;
+  dst[len] = 0;
 }
+void setSeqName(const char *n) { cleanName(seqName, sizeof(seqName), n); }
 
-bool startUnlockSeq(const char *name, const char *src) {
+bool startUnlockSeq(const char *name, const char *by, const char *src) {
   if (seqActive || relayActive) return false;
   setSeqName(name);
-  char d[48];
-  snprintf(d, sizeof(d), "%s %s", src, seqName[0] ? seqName : "(no name)");
+  cleanName(seqBy, sizeof(seqBy), by);
+  if (!seqBy[0]) strcpy(seqBy, "unknown");
+  char d[100];
+  snprintf(d, sizeof(d), "src=%s;for=%s;by=%s", src, seqName, seqBy);
   logEvent("unlock_request", d);
   // Measure the name so it scrolls fully on and off, at a fixed speed.
   int16_t y1;
@@ -700,7 +714,11 @@ void serviceSeq() {
   uint32_t t = millis() - seqStart, fireAt = seqFireAt();
   if (!seqFired && t >= fireAt) {
     seqFired = true;
-    pulseRelay();
+    if (pulseRelay()) {
+      lastPulseAt = millis();
+      strcpy(lastFor, seqName);
+      strcpy(lastBy, seqBy);
+    }
   }
   if (t >= fireAt + SEQ_DONE_MS) {
     seqActive = false;
@@ -814,7 +832,9 @@ bool pulseRelay() {
   digitalWrite(RELAY_PIN, RELAY_ON);
   relayActive = true;
   relayOnAt = millis();
-  logEvent("relay_pulse");
+  char d[80];
+  snprintf(d, sizeof(d), "for=%s;by=%s", seqActive ? seqName : "", seqActive ? seqBy : "");
+  logEvent("relay_pulse", d);
   return true;
 }
 
@@ -842,8 +862,8 @@ void serviceSerial() {
         delay(200);
         ESP.restart();
       }
-      if (len && strcmp(buf, "unlock") == 0) startUnlockSeq("", "serial");
-      else if (len && strncmp(buf, "unlock ", 7) == 0) startUnlockSeq(buf + 7, "serial");
+      if (len && strcmp(buf, "unlock") == 0) startUnlockSeq("", "serial", "serial");
+      else if (len && strncmp(buf, "unlock ", 7) == 0) startUnlockSeq(buf + 7, "serial", "serial");
       len = 0;
     } else if (len < sizeof(buf) - 1) {
       buf[len++] = c;
@@ -871,7 +891,8 @@ button{background:#1f6b4a;border:0;font-weight:700}button.alt{background:#333}bu
 table{width:100%;border-collapse:collapse;font-size:.85rem}td{padding:4px 6px;border-bottom:1px solid #333;vertical-align:top}
 .tw{overflow-x:auto}</style></head>
 <body><h1>Cage Lock</h1><div id="st">...</div><p><small id="sig"></small></p>
-<input id="name" placeholder="Name (optional)" maxlength="32">
+<input id="name" placeholder="Opening for (name shown on the lock)" maxlength="32">
+<input id="by" placeholder="Your name" maxlength="32">
 <button id="go">Unlock</button><div id="msg"></div>
 <details><summary><small>API key</small></summary><input id="key" placeholder="API key"></details>
 <h2>WiFi</h2>
@@ -882,15 +903,21 @@ table{width:100%;border-collapse:collapse;font-size:.85rem}td{padding:4px 6px;bo
 <div class="tw"><table id="log"></table></div>
 <script>
 const $=id=>document.getElementById(id);$('key').value=localStorage.k||'';
+// "closed;open_s=192;for=JP;by=Tony" -> "closed, open 3m 12s, for JP, by Tony"
+const nice=d=>d.split(';').filter(p=>p&&!/=$/.test(p)).map(p=>{const [k,v]=p.split('=');
+if(v===undefined)return k;if(k=='open_s')return 'open '+Math.floor(v/60)+'m '+(v%60)+'s';return k+' '+v}).join(', ');
 const esc=t=>t.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const key=()=>{localStorage.k=$('key').value;return $('key').value};
+$('by').value=localStorage.by||'';$('by').onchange=()=>localStorage.by=$('by').value;
 $('key').onchange=key;
 async function poll(){try{const s=await(await fetch('/status')).json();
 $('st').textContent=s.state;$('st').className=s.state=='CLOSED & LOCKED'?'':'bad';
 const t=s.time?new Date(s.time*1000).toLocaleString():'clock not synced';
-$('sig').textContent='WiFi '+s.wifi+' ('+s.rssi+' dBm) - '+t+(s.relay?' - relay ON':'');}catch(e){$('st').textContent='offline';}}
+const o=s.open_s?' - open '+Math.floor(s.open_s/60)+'m '+(s.open_s%60)+'s':'';
+$('sig').textContent='WiFi '+s.wifi+' ('+s.rssi+' dBm) - '+t+o+(s.relay?' - relay ON':'');}catch(e){$('st').textContent='offline';}}
 $('go').onclick=async()=>{$('go').disabled=true;
-try{const r=await fetch('/unlock?name='+encodeURIComponent($('name').value),{method:'PUT',headers:{'X-Api-Key':key()}});
+localStorage.by=$('by').value;
+try{const r=await fetch('/unlock?name='+encodeURIComponent($('name').value)+'&by='+encodeURIComponent($('by').value),{method:'PUT',headers:{'X-Api-Key':key()}});
 const j=await r.json();$('msg').textContent=r.status==202?'Unlocking in '+(j.fires_in_ms/1000).toFixed(1)+' s':
 r.status==401?'Wrong API key':'Busy, try again';}catch(e){$('msg').textContent='Error';}
 setTimeout(()=>$('go').disabled=false,3000);};
@@ -904,7 +931,7 @@ $('showlog').onclick=async()=>{const r=await fetch('/log',{headers:{'X-Api-Key':
 if(r.status!=200){$('log').innerHTML='<tr><td>'+(r.status==401?'Wrong API key':'Error')+'</td></tr>';return;}
 const rows=(await r.text()).trim().split('\n').slice(1).slice(-40).reverse();
 $('log').innerHTML=rows.map(l=>{const c=l.split(',');const when=c[1]||('boot+'+c[2]+'s');
-return '<tr><td>'+esc(when)+'</td><td>'+esc(c[3]||'')+'</td><td>'+esc(c[4]||'')+'</td></tr>'}).join('');};
+return '<tr><td>'+esc(when)+'</td><td>'+esc(c[3]||'')+'</td><td>'+esc(nice(c[4]||''))+'</td></tr>'}).join('');};
 poll();setInterval(poll,2000);
 </script></body></html>)HTML";
 
@@ -923,7 +950,9 @@ void handleStatus() {
   j += WiFi.RSSI();
   j += ",\"wifi\":\"";
   j += wifiQuality();
-  j += "\",\"time\":";
+  j += "\",\"open_s\":";
+  j += (isOpen() && doorOpenedAt) ? (long)((millis() - doorOpenedAt) / 1000) : 0L;
+  j += ",\"time\":";
   j += timeValid() ? (long)time(nullptr) : 0L;
   j += ",\"relay\":";
   j += relayActive ? "true" : "false";
@@ -980,7 +1009,7 @@ void handleLog() {
 void handleUnlock() {
   sendCors();
   if (!keyOk("unlock")) return;
-  if (startUnlockSeq(server.arg("name").c_str(), "web")) {
+  if (startUnlockSeq(server.arg("name").c_str(), server.arg("by").c_str(), "web")) {
     String j = "{\"ok\":true,\"fires_in_ms\":";
     j += (long)seqFireAt();
     j += "}";
@@ -1089,7 +1118,7 @@ void setup() {
   digitalWrite(RELAY_PIN, RELAY_OFF);
   relayOffAt = millis() - PULSE_GAP_MS;
 
-  pinMode(REED_PIN, INPUT_PULLUP);
+  pinMode(DOOR_PIN, INPUT_PULLUP);
   pinMode(LOCK_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   Serial.begin(115200);
@@ -1108,9 +1137,10 @@ void setup() {
   display.setTextWrap(false);
   display.clearDisplay();
 
-  reedStable = reedLast = digitalRead(REED_PIN);
+  doorStable = doorLast = digitalRead(DOOR_PIN);
+  if (isOpen()) doorOpenedAt = millis();  // time an already-open door from boot
   lockStable = lockLast = digitalRead(LOCK_PIN);
-  digitalWrite(LED_PIN, reedStable);
+  digitalWrite(LED_PIN, doorStable);
   Serial.println(stateText());
   startPlaylist();
 }
@@ -1121,16 +1151,30 @@ void loop() {
   serviceSeq();
   serviceRelay();
 
-  // Door reed, debounced. LED on (LOW) when closed.
-  int r = digitalRead(REED_PIN);
-  if (r != reedLast) {
-    reedLast = r;
-    reedChange = millis();
+  // Door switch, debounced. LED on (LOW) when closed.
+  int r = digitalRead(DOOR_PIN);
+  if (r != doorLast) {
+    doorLast = r;
+    doorChange = millis();
   }
-  if (millis() - reedChange >= DEBOUNCE_MS && r != reedStable) {
-    reedStable = r;
-    digitalWrite(LED_PIN, reedStable);
-    logEvent("door", isOpen() ? "open" : "closed");
+  if (millis() - doorChange >= DEBOUNCE_MS && r != doorStable) {
+    doorStable = r;
+    digitalWrite(LED_PIN, doorStable);
+    char d[110];
+    if (isOpen()) {
+      doorOpenedAt = millis();
+      bool recent = lastPulseAt && millis() - lastPulseAt < DOOR_ATTRIB_MS;
+      strcpy(openFor, recent ? lastFor : "");
+      strcpy(openBy, recent ? lastBy : "");
+      lastPulseAt = 0;  // one unlock attributes one opening
+      snprintf(d, sizeof(d), "open;for=%s;by=%s", openFor, openBy);
+    } else {
+      snprintf(d, sizeof(d), "closed;open_s=%lu;for=%s;by=%s",
+               doorOpenedAt ? (unsigned long)((millis() - doorOpenedAt) / 1000) : 0UL, openFor, openBy);
+      doorOpenedAt = 0;
+      openFor[0] = openBy[0] = 0;
+    }
+    logEvent("door", d);
     resetTitle();
     startPlaylist();
   }

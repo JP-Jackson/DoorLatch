@@ -1,6 +1,6 @@
 # Cage Lock
 
-ESP8266 (HiLetgo NodeMCU, CP2102) Cage Lock controller: 12V pulse-type cabinet lock via relay, OLED status, buzzer, door reed switch and lock feedback switch.
+ESP8266 (HiLetgo NodeMCU, CP2102) Cage Lock controller: 12V pulse-type cabinet lock via relay, OLED status, buzzer, door switch and lock feedback switch.
 
 Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a browser).
 
@@ -12,7 +12,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 | Buzzer | D8 | 15 | OUTPUT | Passive piezo through 100 Ω. Boot strap pin, must be LOW at boot. |
 | OLED SCL | D1 | 5 | I2C | SSD1306 128x64, address 0x3C. Board header order: GND, VCC, SCL, SDA. Yellow/blue two-color panel (top 16 rows yellow) |
 | OLED SDA | D2 | 4 | I2C | |
-| Door reed | D7 | 13 | INPUT_PULLUP | To GND. LOW = door closed |
+| Door switch | D7 | 13 | INPUT_PULLUP | To GND. LOW = door closed |
 | Lock feedback | D6 | 12 | INPUT_PULLUP | Lock's dry contact to GND, closed when locked (LOW = locked). Never 12V on this pin |
 
 ### Power
@@ -22,25 +22,25 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 ## Status table (cage_lock)
 
 **1. CLOSED + LOCKED** (normal)
-- Reed LOW, Chain LOW
+- Door LOW, Chain LOW
 - Band: CLOSED & LOCKED, swaps normal/inverted every 5 s
 - Screen: JP lock -> Need something? -> Get A-1 -> OR -> Call Your Manager -> PRODUCTION / P O L K / TECHNOLOGIES -> WiFi signal
 - LED on
 
 **2. CLOSED + UNLOCKED**
-- Reed LOW, Chain HIGH
+- Door LOW, Chain HIGH
 - Band: CLOSED & UNLOCKED, swaps normal/inverted every 5 s
 - Screen: CLOSED / BUT / NOT / LOCKED! one huge word at a time
 - LED on
 
 **3. OPEN + UNLOCKED** (cage in use)
-- Reed HIGH, Chain HIGH
+- Door HIGH, Chain HIGH
 - Band: OPEN & UNLOCKED, flashing
 - Screen: Close the Cage -> JP unlock -> CLOSE / THE / CAGE -> JP unlock
 - LED off
 
 **4. OPEN + LOCKED** (shouldn't happen)
-- Reed HIGH, Chain LOW
+- Door HIGH, Chain LOW
 - Band: OPEN & LOCKED, flashing
 - Screen: Chain is locked but door open!
 - LED off
@@ -58,7 +58,7 @@ Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) wit
 
 - `GET http://cagelock.local/status` -> `{"door":"closed","chain":"locked","state":"CLOSED & LOCKED","rssi":-61,"relay":false}`
 - `http://cagelock.local/` -> simple page: live status, name box, Unlock button (API key entered once, saved in that browser).
-- `PUT http://cagelock.local/unlock?name=JP` with header `X-Api-Key: <API_KEY>` -> unlock sequence: Unlocking / the / Cage / for (one word each, fast) / name scrolls (24pt bold, any length) / in / 3 / 2 / 1 (0.6 s each) -> relay pulse -> "UNLOCKED". Name optional (max 32 chars; long names scroll faster, 5 s max). 202 accepted (`fires_in_ms`), 401 bad key, 409 busy.
+- `PUT http://cagelock.local/unlock?name=JP&by=Tony` with header `X-Api-Key: <API_KEY>` -> unlock sequence: Unlocking / the / Cage / for (one word each, fast) / name scrolls (24pt bold, any length) / in / 3 / 2 / 1 (0.6 s each) -> relay pulse -> "UNLOCKED". `name` = who it's opened for (shown on screen), `by` = who is unlocking (logged); both optional, max 32 chars; long names scroll faster, 5 s max. 202 accepted (`fires_in_ms`), 401 bad key, 409 busy.
 - `PUT /wifisetup` (key) -> lock switches to the CageLock setup hotspot (also a "Configure WiFi" button on the page).
 - `GET /log` (key via header or `?key=`) -> event log CSV; `?since=<epoch>` returns only newer synced entries.
 - Serial: `unlock` or `unlock JP` runs the same sequence. Band shows "Unlocking remotely" / "Please standby" until the relay fires, then "UNLOCKED".
@@ -67,7 +67,7 @@ Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) wit
 PowerShell test:
 ```powershell
 Invoke-RestMethod http://cagelock.local/status
-Invoke-RestMethod -Method Put "http://cagelock.local/unlock?name=JP" -Headers @{ "X-Api-Key" = "<API_KEY>" }
+Invoke-RestMethod -Method Put "http://cagelock.local/unlock?name=JP&by=Tony" -Headers @{ "X-Api-Key" = "<API_KEY>" }
 ```
 
 ## Event log (cage_lock)
@@ -79,17 +79,19 @@ epoch,local_time,uptime_s,event,detail
 0,,0,boot,Power On
 1759600212,2026-10-04 13:30:12,8,wifi_connected,IOT 192.168.1.57
 1759600213,2026-10-04 13:30:13,9,time_sync,
-1759600930,2026-10-04 13:42:10,726,door,open
-1759600954,2026-10-04 13:42:34,750,door,closed
-1759600960,2026-10-04 13:42:40,756,chain,locked
-1759601402,2026-10-04 13:50:02,1198,unlock_request,web JP Jackson
-1759601407,2026-10-04 13:50:07,1203,relay_pulse,
+1759601402,2026-10-04 13:50:02,1198,unlock_request,src=web;for=JP Jackson;by=Tony
+1759601407,2026-10-04 13:50:07,1203,relay_pulse,for=JP Jackson;by=Tony
 1759601415,2026-10-04 13:50:15,1211,chain,unlocked
+1759601420,2026-10-04 13:50:20,1216,door,open;for=JP Jackson;by=Tony
+1759601612,2026-10-04 13:53:32,1408,door,closed;open_s=192;for=JP Jackson;by=Tony
+1759601620,2026-10-04 13:53:40,1416,chain,locked
 1759601800,2026-10-04 13:56:40,1596,unlock_denied,unlock from 192.168.1.88
 1759602000,2026-10-04 14:00:00,1796,wifi_lost,
 1759602060,2026-10-04 14:01:00,1856,setup_hotspot,CageLock
 1759602100,2026-10-04 14:01:40,1896,wifi_setup_request,192.168.1.20
 ```
+
+`detail` is `key=value;key=value`. A door opening within 2 minutes of an unlock carries that unlock's `for`/`by`; the matching close adds `open_s` (seconds open). A door opened without a recent unlock logs `open;for=;by=`.
 
 ## Parts
 
@@ -99,7 +101,7 @@ epoch,local_time,uptime_s,event,detail
 - 1N4007 diode (flyback across lock)
 - Passive piezo buzzer + 100 Ω resistor
 - 0.96" I2C OLED, SSD1306, 0x3C
-- Door reed switch + magnet
+- Door switch (magnetic) + magnet
 - 12V lock has a built-in feedback switch (dry contact, closed when locked)
 - Breadboard + jumpers
 
