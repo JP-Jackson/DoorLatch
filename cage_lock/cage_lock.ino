@@ -3,14 +3,14 @@
 // The lock is a chain around the door, separate from the door itself.
 // Yellow band (rows 0-15): combined state, e.g. "CLOSED & LOCKED", centered, in
 //   bold bitmaps pre-rendered from DejaVu Sans Bold (band_text.h, band_gen.py.txt),
-//   showing "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD" for 2 s every 30 s.
 //   Door closed: static, swapping normal/inverted every 5 s.
 //   Door open:   flashing normal <-> inverted.
 // Blue area (rows 16-63): playlist per state, restarting whenever either input changes.
 //   CLOSED + LOCKED:   JP + padlock slides in from the right, locks, padlock rattles
 //                      -> "Need something?" -> "Get A-1" (A-1 parks centered) -> "OR"
 //                      -> "Call Your Manager" slides in from the right
-//                      -> "Polk Production Technologies" (fades) -> repeat.
+//                      -> PRODUCTION / P O L K / TECHNOLOGIES (fades)
+//                      -> WiFi screen ("WiFi" / GREAT/GOOD/FAIR/WEAK/BAD/OFFLINE) -> repeat.
 //   CLOSED + UNLOCKED: "CLOSED" / "BUT" / "NOT" / "LOCKED!" one huge word at a time (inverted).
 //   OPEN + UNLOCKED:   "Close the Cage" -> JP unlock -> "CLOSE" / "THE" / "CAGE"
 //                      -> JP unlock -> repeat (inverted colors).
@@ -22,8 +22,8 @@
 //   starts hotspot "CageLock" (password AP_PASS) with a setup page to pick a network.
 //   Band alternates state / "WiFi SETUP MODE" / "Join WiFi: CageLock". With no one
 //   on the hotspot it retries saved WiFi every 5 min. Serial "wifireset" forgets
-//   the saved network and reboots (back to secrets.h). The band alternates the state text with
-//   "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD" or "NO WIFI". mDNS name: cagelock.local
+//   the saved network and reboots (back to secrets.h). Signal strength is a screen
+//   in the CLOSED + LOCKED loop. mDNS name: cagelock.local
 // Web page: http://cagelock.local/ shows live status, a name box and an Unlock
 //   button. The API key is typed into the page once and kept in that browser.
 // Web API (port 80):
@@ -141,8 +141,8 @@ uint32_t tTimer = 0;
 // Blue area: play the current playlist; Polk fades, everything else cuts.
 enum BluePhase { B_IN, B_HOLD, B_OUT, B_GAP };
 BluePhase bPhase = B_IN;
-enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENWORDS, I_NOTLOCKED, I_WARN };
-const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_POLK};          // closed + locked
+enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENWORDS, I_NOTLOCKED, I_WARN, I_WIFI };
+const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_POLK, I_WIFI};  // closed + locked
 const uint8_t NAG_LIST[] = {I_NOTLOCKED};                       // closed + unlocked
 const uint8_t OPEN_LIST[] = {I_OPENMSG, I_UNLOCK, I_OPENWORDS, I_UNLOCK};  // open + unlocked
 const uint8_t WARN_LIST[] = {I_WARN};                           // open + locked
@@ -192,8 +192,6 @@ void resetTitle() {
   tTimer = millis();
 }
 
-const uint32_t WIFI_EVERY_MS = 30000;  // show the WiFi signal text...
-const uint16_t WIFI_SHOW_MS = 2000;    // ...for 2 s out of every 30 s
 const uint16_t CLOSED_INV_MS = 5000;   // closed: swap normal/inverted every 5 s
 
 // 0-4 bars from RSSI, -1 when not connected.
@@ -219,7 +217,6 @@ extern uint32_t seqStart;
 const uint16_t SEQ_BAND_SWAP_MS = 1500;
 
 void drawTitle() {
-  static char wifiText[20];
   const char *t = titleText();
   if (seqActive) {
     // Web/serial unlock: alternate the two phrases until the relay fires.
@@ -228,14 +225,6 @@ void drawTitle() {
   } else if (wm.getConfigPortalActive() && (millis() / 2000) % 3) {
     // Setup hotspot running: state, then the two setup lines, 2 s each.
     t = (millis() / 2000) % 3 == 1 ? "WiFi SETUP MODE" : "Join WiFi: CageLock";
-  } else if (millis() % WIFI_EVERY_MS < WIFI_SHOW_MS) {
-    int8_t bars = wifiBars();
-    if (bars < 0) strcpy(wifiText, "NO WIFI");
-    else {
-      static const char *Q[] = {"BAD", "WEAK", "FAIR", "GOOD", "GREAT"};
-      snprintf(wifiText, sizeof(wifiText), "WiFi Signal: %s", Q[bars]);
-    }
-    t = wifiText;
   }
   int16_t w = titleWidth(t);
   bool inv = seqActive ? true : isOpen() ? flashInv : (millis() / CLOSED_INV_MS) % 2;
@@ -400,6 +389,26 @@ void drawNotLocked(uint32_t t) {
   else if (t < 1400) drawBlockWord("BUT");
   else if (t < 2100) drawBlockWord("NOT");
   else drawBlockWord("LOCKED!");
+}
+
+// WiFi signal screen: "WiFi" (12pt) over the rating (18pt, 12pt if it won't fit).
+const uint16_t WIFI_MS = 2500;
+int8_t wifiBars();
+void drawWifiScreen() {
+  static const char *Q[] = {"BAD", "WEAK", "FAIR", "GOOD", "GREAT"};
+  int8_t bars = wifiBars();
+  const char *q = bars < 0 ? "OFFLINE" : Q[bars];
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setFont(&FreeSansBold12pt7b);
+  printCentered("WiFi", 35);
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.setFont(&FreeSansBold18pt7b);
+  display.getTextBounds(q, 0, 0, &x1, &y1, &w, &h);
+  if (w > 126) display.setFont(&FreeSansBold12pt7b);
+  printCentered(q, 62);
+  display.setFont(NULL);
 }
 
 // Open but chain locked: shouldn't happen (chain locked with the door open).
@@ -598,6 +607,7 @@ uint16_t itemHoldMs(uint8_t i) {
     case I_OPENWORDS: return 2 * WORD_MS + LAST_WORD_MS;
     case I_NOTLOCKED: return NOTLOCKED_MS;
     case I_WARN: return WARN_MS;
+    case I_WIFI: return WIFI_MS;
     default: return OPEN_MSG_MS;
   }
 }
@@ -648,6 +658,7 @@ void drawBlue() {
       case I_OPENWORDS: drawOpenWords(t); break;
       case I_NOTLOCKED: drawNotLocked(t); break;
       case I_WARN: drawWarn(); break;
+      case I_WIFI: drawWifiScreen(); break;
     }
     applyFade(fadeLevel);
   }
