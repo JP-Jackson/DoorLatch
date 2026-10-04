@@ -9,8 +9,8 @@
 //   CLOSED + LOCKED:   JP + padlock slides in from the right, locks, padlock rattles
 //                      -> "Need something?" -> "Get A-1" (A-1 parks centered) -> "OR"
 //                      -> "Call Your Manager" slides in from the right
-//                      -> QR code (JP's contact vCard, or QR_URL from secrets.h if set)
-//                         + Polk logo + "SCAN ME" (full screen, band hidden)
+//                      -> QR code in the blue area (JP's contact vCard, or QR_URL from
+//                         secrets.h if set), band reads "Need JP, SCAN ME"
 //                      -> "Polk Production Technologies" (fades) -> repeat.
 //   CLOSED + UNLOCKED: "CLOSED" / "BUT" / "NOT" / "LOCKED!" one huge word at a time (inverted).
 //   OPEN + UNLOCKED:   "Close the Cage" -> JP unlock -> "CLOSE" / "THE" / "CAGE"
@@ -52,7 +52,6 @@
 #include <ESP8266mDNS.h>
 #include "logo.h"
 #include <qrcode.h>
-#include "polk_logo.h"
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -197,8 +196,11 @@ void drawWifiIcon(uint16_t fg) {
   }
 }
 
+bool qrShowing();
+extern const char QR_BAND[];
+
 void drawTitle() {
-  const char *t = titleText();
+  const char *t = qrShowing() ? QR_BAND : titleText();
   int16_t w = titleWidth(t);
   bool inv = isOpen() ? flashInv : closedInv;
   display.setFont(NULL);
@@ -471,28 +473,17 @@ void buildQr() {
   Serial.println(qrOk ? "ready" : "text too long (max ~150 chars)");
 }
 
-// Full screen: QR on a white 64x64 square at left (modules scaled to fill
-// 62 px, uneven 1-2 px steps are fine for scanners), Polk logo + "SCAN ME" right.
+// QR in the blue area only: white 48x48 square (quiet zone) centered, one
+// pixel per module. Fractional scaling to fill the space didn't scan reliably.
 void drawQr() {
-  display.fillRect(0, 0, 128, 64, SSD1306_BLACK);
-  display.fillRect(0, 0, 64, 64, SSD1306_WHITE);  // quiet zone
-  if (qrOk) {
-    const int16_t AREA = 62, OFS = 1;
-    for (uint8_t y = 0; y < qr.size; y++) {
-      int16_t y0 = OFS + y * AREA / qr.size, y1 = OFS + (y + 1) * AREA / qr.size;
-      for (uint8_t x = 0; x < qr.size; x++) {
-        if (!qrcode_getModule(&qr, x, y)) continue;
-        int16_t x0 = OFS + x * AREA / qr.size, x1 = OFS + (x + 1) * AREA / qr.size;
-        display.fillRect(x0, y0, x1 - x0, y1 - y0, SSD1306_BLACK);
-      }
-    }
-  }
-  display.drawBitmap(64, 0, POLK_BMP, POLK_W, POLK_H, SSD1306_WHITE);
-  display.setFont(NULL);
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(64 + (64 - 41) / 2, 54);  // "SCAN ME" = 41 px
-  display.print("SCAN ME");
+  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_BLACK);
+  display.fillRect(40, BLUE_Y, 48, 48, SSD1306_WHITE);
+  if (!qrOk) return;
+  int16_t m = qr.size <= 24 ? 2 : 1;  // version 1 (21) can use 2 px
+  int16_t ox = 40 + (48 - qr.size * m) / 2, oy = BLUE_Y + (48 - qr.size * m) / 2;
+  for (uint8_t y = 0; y < qr.size; y++)
+    for (uint8_t x = 0; x < qr.size; x++)
+      if (qrcode_getModule(&qr, x, y)) display.fillRect(ox + x * m, oy + y * m, m, m, SSD1306_BLACK);
 }
 
 // ---------- unlock sequence ----------
@@ -597,6 +588,7 @@ void serviceSeq() {
 }
 
 bool qrShowing() { return !seqActive && item == I_QR && bPhase != B_GAP; }
+const char QR_BAND[] = "Need JP, SCAN ME";
 
 bool itemFades(uint8_t i) { return i == I_POLK; }
 
@@ -912,7 +904,7 @@ void loop() {
     lastFrame = millis();
     buildQr();    // once
     drawBlue();   // first, so the band covers anything that slid above row 16
-    if (!qrShowing()) drawTitle();  // QR uses the full screen
+    drawTitle();
     display.display();
   }
 }
