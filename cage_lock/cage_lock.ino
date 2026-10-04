@@ -10,7 +10,7 @@
 //                      -> "Need something?" -> "Get A-1" (A-1 parks centered) -> "OR"
 //                      -> "Call Your Manager" slides in from the right
 //                      -> QR code in the blue area (JP's contact vCard, or QR_URL from
-//                         secrets.h if set), band reads "Need JP, SCAN ME"
+//                         secrets.h if set), band reads "Need JP" then "SCAN ME"
 //                      -> "Polk Production Technologies" (fades) -> repeat.
 //   CLOSED + UNLOCKED: "CLOSED" / "BUT" / "NOT" / "LOCKED!" one huge word at a time (inverted).
 //   OPEN + UNLOCKED:   "Close the Cage" -> JP unlock -> "CLOSE" / "THE" / "CAGE"
@@ -197,10 +197,10 @@ void drawWifiIcon(uint16_t fg) {
 }
 
 bool qrShowing();
-extern const char QR_BAND[];
+const char *qrBandText();
 
 void drawTitle() {
-  const char *t = qrShowing() ? QR_BAND : titleText();
+  const char *t = qrShowing() ? qrBandText() : titleText();
   int16_t w = titleWidth(t);
   bool inv = isOpen() ? flashInv : closedInv;
   display.setFont(NULL);
@@ -588,7 +588,9 @@ void serviceSeq() {
 }
 
 bool qrShowing() { return !seqActive && item == I_QR && bPhase != B_GAP; }
-const char QR_BAND[] = "Need JP, SCAN ME";
+// Band during the QR screen: "Need JP" first, then "SCAN ME".
+const uint16_t QR_NEED_MS = 2000;
+const char *qrBandText() { return millis() - bTimer < QR_NEED_MS ? "Need JP" : "SCAN ME"; }
 
 bool itemFades(uint8_t i) { return i == I_POLK; }
 
