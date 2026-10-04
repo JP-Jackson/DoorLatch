@@ -9,6 +9,8 @@
 //   CLOSED + LOCKED:   JP + padlock slides in from the right, locks, padlock rattles
 //                      -> "Need something?" -> "Get A-1" (A-1 parks centered) -> "OR"
 //                      -> "Call Your Manager" slides in from the right
+//                      -> QR code + "SCAN ME" (full screen, band hidden; QR_URL in
+//                         secrets.h, else this lock's own page by IP)
 //                      -> "Polk Production Technologies" (fades) -> repeat.
 //   CLOSED + UNLOCKED: "CLOSED" / "BUT" / "NOT" / "LOCKED!" one huge word at a time (inverted).
 //   OPEN + UNLOCKED:   "Close the Cage" -> JP unlock -> "CLOSE" / "THE" / "CAGE"
@@ -36,7 +38,7 @@
 // Serial is ignored for the first 3 s after boot so noise can't trigger it.
 // Boot/power loss: D5 (GPIO14) is high-impedance until setup() drives it HIGH,
 // so the relay stays off through reset, brownout and power-up.
-// Libraries: Adafruit SSD1306, Adafruit GFX Library.
+// Libraries: Adafruit SSD1306, Adafruit GFX Library, QRCode (Richard Moore).
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -49,6 +51,7 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include "logo.h"
+#include <qrcode.h>
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -119,8 +122,8 @@ uint32_t tTimer = 0;
 // Blue area: play the current playlist; Polk fades, everything else cuts.
 enum BluePhase { B_IN, B_HOLD, B_OUT, B_GAP };
 BluePhase bPhase = B_IN;
-enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENWORDS, I_NOTLOCKED, I_WARN };
-const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_POLK};          // closed + locked
+enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENWORDS, I_NOTLOCKED, I_WARN, I_QR };
+const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_QR, I_POLK};    // closed + locked
 const uint8_t NAG_LIST[] = {I_NOTLOCKED};                       // closed + unlocked
 const uint8_t OPEN_LIST[] = {I_OPENMSG, I_UNLOCK, I_OPENWORDS, I_UNLOCK};  // open + unlocked
 const uint8_t WARN_LIST[] = {I_WARN};                           // open + locked
@@ -430,6 +433,60 @@ void applyFade(uint8_t level) {
       if (BAYER[y & 3][x & 3] >= level) display.drawPixel(x, y, SSD1306_BLACK);
 }
 
+// ---------- QR code ----------
+
+const uint16_t QR_MS = 5000;
+QRCode qr;
+uint8_t qrBuf[137];          // version 4: 33x33 modules = 137 bytes
+bool qrOk = false;
+String qrText;
+
+// Builds the QR for QR_URL (secrets.h) or, if unset, http://<this lock's IP>/.
+// Picks the smallest version 1-4 that fits; 1-3 draw at 2 px per module.
+void buildQr() {
+#ifdef QR_URL
+  String want = QR_URL;
+#else
+  String want = WiFi.status() == WL_CONNECTED ? String("http://") + WiFi.localIP().toString() + "/" : "";
+#endif
+  if (want == qrText && (qrOk || want.length() == 0)) return;
+  qrText = want;
+  qrOk = false;
+  if (want.length() == 0) return;
+  for (uint8_t v = 1; v <= 4 && !qrOk; v++)
+    qrOk = qrcode_initText(&qr, qrBuf, v, ECC_LOW, want.c_str()) == 0;
+  Serial.print(F("QR: "));
+  Serial.println(qrOk ? want.c_str() : "too long (max 78 chars)");
+}
+
+// Full screen: white square with the QR on the left, "SCAN ME" on the right.
+void drawQr() {
+  display.fillRect(0, 0, 128, 64, SSD1306_BLACK);
+  if (!qrOk) {
+    drawMessage(&FreeSansBold12pt7b, "No WiFi", "yet", 0, SSD1306_WHITE);
+    return;
+  }
+  int16_t m = qr.size <= 29 ? 2 : 1;  // px per module
+  int16_t px = qr.size * m;
+  int16_t ox = (64 - px) / 2, oy = (64 - px) / 2;
+  display.fillRect(0, 0, 64, 64, SSD1306_WHITE);  // quiet zone
+  for (uint8_t y = 0; y < qr.size; y++)
+    for (uint8_t x = 0; x < qr.size; x++)
+      if (qrcode_getModule(&qr, x, y)) display.fillRect(ox + x * m, oy + y * m, m, m, SSD1306_BLACK);
+  display.setFont(&FreeSansBold12pt7b);
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds("SCAN", 0, 0, &x1, &y1, &w, &h);
+  display.setCursor(64 + (64 - w) / 2 - x1, 28);
+  display.print("SCAN");
+  display.getTextBounds("ME", 0, 0, &x1, &y1, &w, &h);
+  display.setCursor(64 + (64 - w) / 2 - x1, 52);
+  display.print("ME");
+  display.setFont(NULL);
+}
+
 // ---------- unlock sequence ----------
 
 void startPlaylist();
@@ -531,6 +588,8 @@ void serviceSeq() {
   }
 }
 
+bool qrShowing() { return !seqActive && item == I_QR && bPhase != B_GAP; }
+
 bool itemFades(uint8_t i) { return i == I_POLK; }
 
 uint16_t itemHoldMs(uint8_t i) {
@@ -542,6 +601,7 @@ uint16_t itemHoldMs(uint8_t i) {
     case I_OPENWORDS: return 2 * WORD_MS + LAST_WORD_MS;
     case I_NOTLOCKED: return NOTLOCKED_MS;
     case I_WARN: return WARN_MS;
+    case I_QR: return QR_MS;
     default: return OPEN_MSG_MS;
   }
 }
@@ -593,6 +653,7 @@ void drawBlue() {
       case I_OPENWORDS: drawOpenWords(t); break;
       case I_NOTLOCKED: drawNotLocked(t); break;
       case I_WARN: drawWarn(); break;
+      case I_QR: drawQr(); break;
     }
     applyFade(fadeLevel);
   }
@@ -841,8 +902,9 @@ void loop() {
 
   if (millis() - lastFrame >= FRAME_MS) {
     lastFrame = millis();
+    buildQr();    // cheap unless the URL/IP changed
     drawBlue();   // first, so the band covers anything that slid above row 16
-    drawTitle();
+    if (!qrShowing()) drawTitle();  // QR uses the full screen
     display.display();
   }
 }
