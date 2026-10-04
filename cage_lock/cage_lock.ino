@@ -415,14 +415,26 @@ void drawMsgScene(uint32_t t) {
 }
 
 void drawCompany() {
-  // FreeSans Bold 9pt is the largest font where "Technologies" fits 128 px.
+  // "P  O  L  K" in 12pt bold, letters spread evenly across 96 px, over
+  // "Production" / "Technologies" in 9pt bold (largest where "Technologies" fits).
   // Baselines leave room for the "g" descender on the last line.
-  display.setFont(&FreeSansBold9pt7b);
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  printCentered("Polk", 28);
-  printCentered("Production", 43);
-  printCentered("Technologies", 58);
+  display.setFont(&FreeSansBold12pt7b);
+  const char *P = "POLK";
+  const int16_t SPAN = 96, X0 = (128 - SPAN) / 2;
+  for (uint8_t i = 0; i < 4; i++) {
+    char c[2] = {P[i], 0};
+    int16_t x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(c, 0, 33, &x1, &y1, &w, &h);
+    int16_t cx = X0 + SPAN * i / 3;  // letter centers at 16, 48, 80, 112
+    display.setCursor(cx - (int16_t)w / 2 - x1, 33);
+    display.print(c);
+  }
+  display.setFont(&FreeSansBold9pt7b);
+  printCentered("Production", 46);
+  printCentered("Technologies", 59);
   display.setFont(NULL);
 }
 
