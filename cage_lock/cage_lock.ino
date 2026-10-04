@@ -10,7 +10,9 @@
 //                      -> "Need something?" -> "Get A-1" (A-1 parks centered) -> "OR"
 //                      -> "Call Your Manager" slides in from the right
 //                      -> PRODUCTION / P O L K / TECHNOLOGIES (fades)
-//                      -> WiFi screen ("WiFi" / GREAT/GOOD/FAIR/WEAK/BAD/OFFLINE) -> repeat.
+//                      -> WiFi screen -> repeat. Signal FAIR or better: only the address
+//                         (cagelock.local / IP), at most once a minute. WEAK/BAD,
+//                         offline or setup hotspot: signal + address every cycle.
 //   CLOSED + UNLOCKED: "CLOSED" / "BUT" / "NOT" / "LOCKED!" one huge word at a time (inverted).
 //   OPEN + UNLOCKED:   "Close the Cage" -> JP unlock -> "CLOSE" / "THE" / "CAGE"
 //                      -> JP unlock -> repeat (inverted colors).
@@ -471,7 +473,21 @@ void drawNotLocked(uint32_t t) {
 // Offline with the setup hotspot up: "Join WiFi" / "CageLock".
 // Offline before the hotspot starts: "WiFi" / "Connecting".
 // Then (connected or setup): "cagelock.local" / IP, or "Then open" / "192.168.4.1".
-const uint16_t WIFI_MS = 5000;  // 2.5 s signal, 2.5 s address
+const uint16_t WIFI_MS = 5000;       // full screen: 2.5 s signal, 2.5 s address
+const uint16_t WIFI_URL_MS = 3000;   // address-only screen when the signal is fine
+const uint32_t URL_EVERY_MS = 60000; // ...shown at most once a minute
+uint32_t urlShownAt = 0;
+bool wifiUrlOnly = false;            // set when the WiFi screen is picked
+
+// Which WiFi screen this cycle: 0 = skip, 1 = address only, 2 = full.
+// Signal FAIR or better: skip, except the address once a minute.
+// WEAK/BAD, offline or setup hotspot: full screen every cycle.
+uint8_t wifiScreenMode() {
+  int8_t b = wifiBars();
+  if (b < 2) return 2;
+  if (urlShownAt && millis() - urlShownAt < URL_EVERY_MS) return 0;
+  return 1;
+}
 int8_t wifiBars();
 // Biggest of 18/12/9pt bold (then the built-in font) that fits 126 px.
 // Returns false if nothing fit and the built-in font was selected.
@@ -502,7 +518,7 @@ void drawWifiScreen() {
   static const char *Q[] = {"BAD", "WEAK", "FAIR", "GOOD", "GREAT"};
   int8_t bars = wifiBars();
   bool setup = bars < 0 && wm.getConfigPortalActive();
-  bool addr = millis() - bTimer >= WIFI_MS / 2 && (bars >= 0 || setup);
+  bool addr = wifiUrlOnly || (millis() - bTimer >= WIFI_MS / 2 && (bars >= 0 || setup));
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
   if (addr) {
@@ -737,7 +753,7 @@ uint16_t itemHoldMs(uint8_t i) {
     case I_OPENWORDS: return 2 * WORD_MS + LAST_WORD_MS;
     case I_NOTLOCKED: return NOTLOCKED_MS;
     case I_WARN: return WARN_MS;
-    case I_WIFI: return WIFI_MS;
+    case I_WIFI: return wifiUrlOnly ? WIFI_URL_MS : WIFI_MS;
     default: return OPEN_MSG_MS;
   }
 }
@@ -765,8 +781,16 @@ void startPlaylist() {
 void nextItem() {
   uint8_t n;
   const uint8_t *list = curList(n);
-  listPos = (listPos + 1) % n;
-  item = list[listPos];
+  for (uint8_t tries = 0; tries < n; tries++) {
+    listPos = (listPos + 1) % n;
+    item = list[listPos];
+    if (item != I_WIFI) return;
+    uint8_t m = wifiScreenMode();
+    if (m == 0) continue;  // signal fine, address shown recently: skip it
+    wifiUrlOnly = (m == 1);
+    if (wifiUrlOnly) urlShownAt = millis();
+    return;
+  }
 }
 
 void drawBlue() {

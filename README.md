@@ -24,7 +24,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 **1. CLOSED + LOCKED** (normal)
 - Door LOW, Chain LOW
 - Band: CLOSED & LOCKED, swaps normal/inverted every 5 s
-- Screen: JP lock -> Need something? -> Get A-1 -> OR -> Call Your Manager -> PRODUCTION / P O L K / TECHNOLOGIES -> WiFi signal
+- Screen: JP lock -> Need something? -> Get A-1 -> OR -> Call Your Manager -> PRODUCTION / P O L K / TECHNOLOGIES -> WiFi (address only, once a minute, when the signal is FAIR or better; full signal screen when WEAK/BAD/offline)
 - LED on
 
 **2. CLOSED + UNLOCKED**
