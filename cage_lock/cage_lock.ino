@@ -27,9 +27,9 @@
 //                   Needs header "X-Api-Key: <API_KEY>". 202 accepted (relay fires
 //                   at the end of the countdown), 401 bad/missing key, 409 busy.
 //   CORS is open so a browser web app can call it.
-// Unlock sequence (blue area, one big word at a time on a lit background):
-//   "Unlocking / the Cage" -> "for" -> NAME -> "in" -> 3 -> 2 -> 1 -> relay pulse
-//   -> "UNLOCKED". Without a name it skips "for" + NAME. Input changes during the
+// Unlock sequence (blue area, black bold text on a lit background):
+//   "Unlocking / the Cage" -> "for" -> NAME scrolls across (24pt, any length)
+//   -> "in" -> 3 -> 2 -> 1 (24pt) -> relay pulse -> "UNLOCKED" (12pt, biggest that fits). Without a name it skips "for" + NAME. Input changes during the
 //   sequence don't interrupt it; the state playlist resumes afterwards.
 // Relay (D5, active LOW): never fires on its own. "unlock" or "unlock NAME" + Enter
 // over serial (115200) runs the unlock sequence; 2 s minimum between pulses.
@@ -435,7 +435,11 @@ void applyFade(uint8_t level) {
 void startPlaylist();
 bool pulseRelay();
 
-const uint16_t SEQ_INTRO_MS = 1500, SEQ_WORD_MS = 600, SEQ_NAME_MS = 1500;
+const uint16_t SEQ_INTRO_MS = 1500, SEQ_WORD_MS = 600;
+const uint16_t NAME_PX_PER_S = 120;   // same speed as "Get A-1"
+const int16_t NAME_BASE = 52;         // 24pt baseline; leaves room for g/y/p tails
+int16_t seqNameW = 0, seqNameX1 = 0;
+uint16_t seqNameMs = 0;
 const uint16_t SEQ_COUNT_MS = 1000, SEQ_DONE_MS = 2000;
 bool seqActive = false, seqFired = false;
 uint32_t seqStart = 0;
@@ -443,7 +447,7 @@ char seqName[17] = "";
 
 uint32_t seqFireAt() {
   uint32_t t = SEQ_INTRO_MS;
-  if (seqName[0]) t += SEQ_WORD_MS + SEQ_NAME_MS;
+  if (seqName[0]) t += SEQ_WORD_MS + seqNameMs;
   return t + SEQ_WORD_MS + 3 * SEQ_COUNT_MS;  // "in" + 3, 2, 1
 }
 
@@ -460,6 +464,15 @@ void setSeqName(const char *n) {
 bool startUnlockSeq(const char *name) {
   if (seqActive || relayActive) return false;
   setSeqName(name);
+  // Measure the name so it scrolls fully on and off, at a fixed speed.
+  int16_t y1;
+  uint16_t w, h;
+  display.setFont(&FreeSansBold24pt7b);
+  display.setTextSize(1);
+  display.getTextBounds(seqName, 0, NAME_BASE, &seqNameX1, &y1, &w, &h);
+  display.setFont(NULL);
+  seqNameW = w;
+  seqNameMs = (uint32_t)(128 + seqNameW) * 1000 / NAME_PX_PER_S;
   seqActive = true;
   seqFired = false;
   seqStart = millis();
@@ -476,19 +489,31 @@ void drawSeq(uint32_t t) {
   }
   t -= SEQ_INTRO_MS;
   if (seqName[0]) {
-    if (t < SEQ_WORD_MS) { drawBlockWord("for"); return; }
+    if (t < SEQ_WORD_MS) { drawWord("for", &FreeSansBold24pt7b, 0, 34); return; }
     t -= SEQ_WORD_MS;
-    if (t < SEQ_NAME_MS) { drawBlockWord(seqName); return; }
-    t -= SEQ_NAME_MS;
+    if (t < seqNameMs) {
+      // Scroll right to left: starts just off the right edge, ends just off the left.
+      int16_t x = 128 - (int16_t)((uint32_t)(128 + seqNameW) * t / seqNameMs) - seqNameX1;
+      display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
+      display.setFont(&FreeSansBold24pt7b);
+      display.setTextSize(1);
+      display.setTextColor(SSD1306_BLACK);
+      display.setCursor(x, NAME_BASE);
+      display.print(seqName);
+      display.setFont(NULL);
+      return;
+    }
+    t -= seqNameMs;
   }
-  if (t < SEQ_WORD_MS) { drawBlockWord("in"); return; }
+  if (t < SEQ_WORD_MS) { drawWord("in", &FreeSansBold24pt7b, 0, 34); return; }
   t -= SEQ_WORD_MS;
   if (t < 3 * SEQ_COUNT_MS) {
     static const char *N[] = {"3", "2", "1"};
-    drawBlockWord(N[t / SEQ_COUNT_MS]);
+    drawWord(N[t / SEQ_COUNT_MS], &FreeSansBold24pt7b, 0, 34);
     return;
   }
-  drawBlockWord("UNLOCKED");
+  // 137 px in 12pt bold; 2 px tighter letters bring it to 123 px.
+  drawWord("UNLOCKED", &FreeSansBold12pt7b, -2, 17);
 }
 
 // Fires the relay at the end of the countdown, then hands the screen back.
