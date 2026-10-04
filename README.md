@@ -54,13 +54,13 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 
 Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) with WIFI_SSID, WIFI_PASS (2.4 GHz), API_KEY and AP_PASS.
 
-**Setup hotspot (no reflash needed to change WiFi):** if WiFi isn't connected 30 s after boot (60 s after a drop), the lock starts hotspot **CageLock** (password = AP_PASS). Join it on a phone, the setup page pops up (or browse to http://192.168.4.1), pick the network, save. It's remembered across reboots and wins over secrets.h. The band shows "WiFi SETUP MODE" / "Join WiFi: CageLock". With nobody on the hotspot it retries the saved WiFi every 5 min. Serial `wifireset` forgets the saved network and goes back to secrets.h. The unlock page/API are offline while the hotspot is up.
+**Setup hotspot (no reflash needed to change WiFi):** if WiFi isn't connected 30 s after boot (60 s after a drop), the lock starts hotspot **CageLock** (password = AP_PASS). Join it on a phone, the setup page pops up (or browse to http://192.168.4.1), pick the network, save. It's remembered across reboots and wins over secrets.h. The band shows "WiFi SETUP MODE" / "Join WiFi: CageLock" / "Open 192.168.4.1". With nobody on the hotspot it retries the saved WiFi every 5 min. Serial `wifireset` forgets the saved network and goes back to secrets.h. The unlock page/API are offline while the hotspot is up.
 
 - `GET http://cagelock.local/status` -> `{"door":"closed","chain":"locked","state":"CLOSED & LOCKED","rssi":-61,"relay":false}`
 - `http://cagelock.local/` -> simple page: live status, name box, Unlock button (API key entered once, saved in that browser).
 - `PUT http://cagelock.local/unlock?name=JP` with header `X-Api-Key: <API_KEY>` -> unlock sequence: Unlocking / the / Cage / for (one word each, fast) / name scrolls (24pt bold, any length) / in / 3 / 2 / 1 (0.6 s each) -> relay pulse -> "UNLOCKED". Name optional (max 32 chars; long names scroll faster, 5 s max). 202 accepted (`fires_in_ms`), 401 bad key, 409 busy.
 - Serial: `unlock` or `unlock JP` runs the same sequence. Band shows "Unlocking remotely" / "Please standby" until the relay fires, then "UNLOCKED".
-- CORS open for a browser web app. WiFi signal is a screen in the CLOSED & LOCKED loop: "WiFi" / GREAT, GOOD, FAIR, WEAK, BAD; "WiFi" / "Connecting" while offline; "Join WiFi" / "CageLock" while the setup hotspot is up.
+- CORS open for a browser web app. WiFi signal is a screen in the CLOSED & LOCKED loop: "WiFi" / GREAT, GOOD, FAIR, WEAK, BAD; "WiFi" / "Connecting" while offline; "Join WiFi" / "CageLock" while the setup hotspot is up. Second half of the screen shows where to browse: "cagelock.local" / IP, or "Then open" / "192.168.4.1" in setup mode.
 
 PowerShell test:
 ```powershell

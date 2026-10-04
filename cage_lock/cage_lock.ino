@@ -57,6 +57,9 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <WiFiManager.h>
+extern "C" {
+#include <user_interface.h>  // wifi_station_disconnect()
+}
 #include "logo.h"
 #include "band_text.h"
 #include "company_text.h"
@@ -222,9 +225,10 @@ void drawTitle() {
     // Web/serial unlock: alternate the two phrases until the relay fires.
     t = seqFired ? "UNLOCKED"
         : ((millis() - seqStart) / SEQ_BAND_SWAP_MS) % 2 ? "Please standby" : "Unlocking remotely";
-  } else if (wm.getConfigPortalActive() && (millis() / 2000) % 3) {
-    // Setup hotspot running: state, then the two setup lines, 2 s each.
-    t = (millis() / 2000) % 3 == 1 ? "WiFi SETUP MODE" : "Join WiFi: CageLock";
+  } else if (wm.getConfigPortalActive() && (millis() / 2000) % 4) {
+    // Setup hotspot running: state, then the three setup lines, 2 s each.
+    static const char *SETUP[] = {"", "WiFi SETUP MODE", "Join WiFi: CageLock", "Open 192.168.4.1"};
+    t = SETUP[(millis() / 2000) % 4];
   }
   int16_t w = titleWidth(t);
   bool inv = seqActive ? true : isOpen() ? flashInv : (millis() / CLOSED_INV_MS) % 2;
@@ -394,26 +398,57 @@ void drawNotLocked(uint32_t t) {
 // WiFi signal screen: "WiFi" (12pt) over the rating (18pt, or the biggest that fits).
 // Offline with the setup hotspot up: "Join WiFi" / "CageLock".
 // Offline before the hotspot starts: "WiFi" / "Connecting".
-const uint16_t WIFI_MS = 2500;
+// Then (connected or setup): "cagelock.local" / IP, or "Then open" / "192.168.4.1".
+const uint16_t WIFI_MS = 5000;  // 2.5 s signal, 2.5 s address
 int8_t wifiBars();
+// Biggest of 18/12/9pt bold (then the built-in font) that fits 126 px.
+// Returns false if nothing fit and the built-in font was selected.
+bool fitFont(const char *q, bool allow18) {
+  static const GFXfont *SIZES[] = {&FreeSansBold18pt7b, &FreeSansBold12pt7b, &FreeSansBold9pt7b};
+  int16_t x1, y1;
+  uint16_t w, h;
+  for (uint8_t i = allow18 ? 0 : 1; i < 3; i++) {
+    display.setFont(SIZES[i]);
+    display.getTextBounds(q, 0, 0, &x1, &y1, &w, &h);
+    if (w <= 126) return true;
+  }
+  display.setFont(NULL);  // built-in 6 px/char fallback
+  return false;
+}
+
+void printFit(const char *q, int16_t baseline, bool allow18) {
+  if (!fitFont(q, allow18)) {  // built-in font draws from the top, not the baseline
+    display.setCursor((128 - (int16_t)strlen(q) * 6) / 2, baseline - 7);
+    display.print(q);
+  } else {
+    printCentered(q, baseline);
+  }
+}
+
+// First half: signal (or setup / connecting). Second half: where to browse.
 void drawWifiScreen() {
   static const char *Q[] = {"BAD", "WEAK", "FAIR", "GOOD", "GREAT"};
   int8_t bars = wifiBars();
   bool setup = bars < 0 && wm.getConfigPortalActive();
-  const char *q = setup ? "CageLock" : bars < 0 ? "Connecting" : Q[bars];
+  bool addr = millis() - bTimer >= WIFI_MS / 2 && (bars >= 0 || setup);
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  display.setFont(&FreeSansBold12pt7b);
-  printCentered(setup ? "Join WiFi" : "WiFi", 35);
-  int16_t x1, y1;
-  uint16_t w, h;
-  static const GFXfont *SIZES[] = {&FreeSansBold18pt7b, &FreeSansBold12pt7b, &FreeSansBold9pt7b};
-  for (const GFXfont *f : SIZES) {  // biggest that fits 126 px
-    display.setFont(f);
-    display.getTextBounds(q, 0, 0, &x1, &y1, &w, &h);
-    if (w <= 126) break;
+  if (addr) {
+    static char ip[16];
+    if (setup) {
+      printFit("Then open", 35, false);
+      printFit("192.168.4.1", 62, false);
+    } else {
+      strncpy(ip, WiFi.localIP().toString().c_str(), sizeof(ip) - 1);
+      printFit("cagelock.local", 35, false);
+      printFit(ip, 62, false);
+    }
+  } else {
+    const char *q = setup ? "CageLock" : bars < 0 ? "Connecting" : Q[bars];
+    display.setFont(&FreeSansBold12pt7b);
+    printCentered(setup ? "Join WiFi" : "WiFi", 35);
+    printFit(q, 62, true);
   }
-  printCentered(q, 62);
   display.setFont(NULL);
 }
 
@@ -850,6 +885,10 @@ void setupWeb() {
 
 void startPortal() {
   if (serverUp) { server.stop(); serverUp = false; }
+  // Stop retrying the saved network: each attempt makes the radio hop channels,
+  // which knocks phones off the hotspot. (SDK call; keeps the saved config.)
+  WiFi.setAutoReconnect(false);
+  wifi_station_disconnect();
   Serial.print(F("No WiFi - starting setup hotspot "));
   Serial.println(AP_NAME);
   wm.startConfigPortal(AP_NAME, AP_PASS);
@@ -865,6 +904,7 @@ void serviceWeb() {
     Serial.println(WiFi.localIP());
     if (wm.getConfigPortalActive()) wm.stopConfigPortal();
     WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
     if (!mdnsStarted) mdnsStarted = MDNS.begin(HOSTNAME);
     if (!serverUp) { server.begin(); serverUp = true; }
     everConnected = true;
@@ -881,6 +921,7 @@ void serviceWeb() {
       Serial.println(F("Setup hotspot idle - retrying saved WiFi"));
       wm.stopConfigPortal();
       WiFi.mode(WIFI_STA);
+      WiFi.setAutoReconnect(true);
       WiFi.begin();
       wifiDownSince = millis();
     }

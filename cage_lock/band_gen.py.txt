@@ -31,7 +31,7 @@ def render_fit(t,cap,top,maxw=126,th=0.30):
 BIG={'Unlocking remotely':(13,0),'Please standby':(13,0),'UNLOCKED':(14,1)}
 S=['CLOSED & LOCKED','CLOSED & UNLOCKED','OPEN & UNLOCKED','OPEN & LOCKED','NO WIFI',
    'WiFi Signal: GREAT','WiFi Signal: GOOD','WiFi Signal: FAIR','WiFi Signal: WEAK','WiFi Signal: BAD',
-   'Unlocking remotely','Please standby','UNLOCKED','WiFi SETUP MODE','Join WiFi: CageLock']
+   'Unlocking remotely','Please standby','UNLOCKED','WiFi SETUP MODE','Join WiFi: CageLock','Open 192.168.4.1']
 out=['// Band phrases pre-rendered from DejaVu Sans Bold (16 px, squeezed to 65%),',
      '// 16 rows tall, 1 bit, MSB first. Generated; edit the list in band_gen.py.',
      '#pragma once','#include <Arduino.h>','']
