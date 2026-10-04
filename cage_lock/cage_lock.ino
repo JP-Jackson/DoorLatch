@@ -12,8 +12,9 @@
 //   Open (inverted colors): "Close the Cage" -> JP unlock (shackle rises, wiggles)
 //           -> "CLOSE" / "THE" / "CAGE" one big word at a time -> JP unlock -> repeat.
 // On-board LED mirrors the reed: on = closed.
-// Relay (D5, active LOW) drives the 12V pulse lock: send 'p' over serial
-// (115200) for one 500 ms pulse. Never held on; 2 s minimum between pulses.
+// Relay (D5, active LOW) drives the 12V pulse lock: one 500 ms pulse each time
+// the reed closes (PULSE_ON_CLOSE), or send 'p' over serial (115200).
+// Never held on; 2 s minimum between pulses.
 // Libraries: Adafruit SSD1306, Adafruit GFX Library.
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -31,6 +32,7 @@ const uint8_t RELAY_PIN = D5;        // relay IN1, active LOW
 const uint8_t RELAY_ON = LOW, RELAY_OFF = HIGH;
 const uint16_t PULSE_MS = 500;       // hard max for the lock coil - do not raise
 const uint16_t PULSE_GAP_MS = 2000;  // let the solenoid cool between pulses
+const bool PULSE_ON_CLOSE = true;    // reed closing fires the relay
 const uint16_t FRAME_MS = 25;
 const uint16_t DEBOUNCE_MS = 50;
 
@@ -459,6 +461,7 @@ void loop() {
     Serial.println(titleText());
     resetTitle();
     startPlaylist();
+    if (PULSE_ON_CLOSE && reedStable == LOW) pulseRelay();
   }
 
   if (millis() - lastFrame >= FRAME_MS) {
