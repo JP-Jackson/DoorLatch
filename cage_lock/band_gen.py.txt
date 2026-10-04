@@ -15,6 +15,20 @@ def render(t):
   a=a.reshape(16,4,w,4).mean(axis=(1,3))         # area-average down to 1x
   a=a>TH
   xs=np.where(a.any(0))[0]; return a[:,xs[0]:xs[-1]+1]
+def fontcap(cap):
+  for sz in range(8,400):
+    f=ImageFont.truetype(PATH,sz); b=f.getbbox('H')
+    if b[3]-b[1]>=cap*4: return f
+def render_fit(t,cap,top,maxw=126,th=0.30):
+  # Bigger, as-wide-as-fits rendering for the unlock-sequence phrases.
+  Fc=fontcap(cap); hb=Fc.getbbox('H'); bb=Fc.getbbox(t); W=bb[2]-bb[0]+8
+  im=Image.new('L',(W,64),0); ImageDraw.Draw(im).text((4-bb[0],top*4-hb[1]),t,font=Fc,fill=255)
+  nat=W/4; w=max(1,round(nat*min(1.0,(maxw+2)/nat)))
+  im=im.resize((w*4,64),Image.LANCZOS)
+  a=(np.array(im,dtype=np.float32)/255).reshape(16,4,w,4).mean(axis=(1,3))>th
+  xs=np.where(a.any(0))[0]; return a[:,xs[0]:xs[-1]+1]
+# Unlock-sequence phrases: (cap height, cap top row)
+BIG={'Unlocking remotely':(13,0),'Please standby':(13,0),'UNLOCKED':(14,1)}
 S=['CLOSED & LOCKED','CLOSED & UNLOCKED','OPEN & UNLOCKED','OPEN & LOCKED','NO WIFI',
    'WiFi Signal: GREAT','WiFi Signal: GOOD','WiFi Signal: FAIR','WiFi Signal: WEAK','WiFi Signal: BAD',
    'Unlocking remotely','Please standby','UNLOCKED','WiFi SETUP MODE','Join WiFi: CageLock']
@@ -23,7 +37,7 @@ out=['// Band phrases pre-rendered from DejaVu Sans Bold (16 px, squeezed to 65%
      '#pragma once','#include <Arduino.h>','']
 names=[]; prev=[]
 for i,t in enumerate(S):
-  a=render(t); h,w=a.shape; bw=(w+7)//8; bs=[]
+  a=render_fit(t,*BIG[t]) if t in BIG else render(t); h,w=a.shape; bw=(w+7)//8; bs=[]
   for y in range(16):
     for k in range(bw):
       v=0

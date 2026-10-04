@@ -36,8 +36,8 @@
 // Unlock sequence (blue area, black bold text on a lit background):
 //   "Unlocking / the Cage" -> "for" -> NAME scrolls across (24pt, any length)
 //   -> "in" -> 3 -> 2 -> 1 (24pt) -> relay pulse -> "UNLOCKED" (12pt, biggest that fits).
-//   Band: "Unlocking remotely" / "Please standby" alternating until the relay fires,
-//   then "UNLOCKED". Without a name it skips "for" + NAME. Input changes during the
+//   Band (inverted, bigger bold text): "Unlocking remotely" / "Please standby"
+//   alternating until the relay fires, then "UNLOCKED". Without a name it skips "for" + NAME. Input changes during the
 //   sequence don't interrupt it; the state playlist resumes afterwards.
 // Relay (D5, active LOW): never fires on its own. "unlock" or "unlock NAME" + Enter
 // over serial (115200) runs the unlock sequence; 2 s minimum between pulses.
@@ -237,7 +237,7 @@ void drawTitle() {
     t = wifiText;
   }
   int16_t w = titleWidth(t);
-  bool inv = seqActive ? false : isOpen() ? flashInv : (millis() / CLOSED_INV_MS) % 2;
+  bool inv = seqActive ? true : isOpen() ? flashInv : (millis() / CLOSED_INV_MS) % 2;
   display.setFont(NULL);
   display.fillRect(0, 0, 128, BAND_H, inv ? SSD1306_WHITE : SSD1306_BLACK);
   uint16_t fg = inv ? SSD1306_BLACK : SSD1306_WHITE;
