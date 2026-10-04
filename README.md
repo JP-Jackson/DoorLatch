@@ -1,6 +1,6 @@
 # Cage Lock
 
-ESP8266 (HiLetgo NodeMCU, CP2102) Cage Lock controller: 12V pulse-type cabinet lock via relay, OLED status, buzzer, window reed switch and lock status switch.
+ESP8266 (HiLetgo NodeMCU, CP2102) Cage Lock controller: 12V pulse-type cabinet lock via relay, OLED status, buzzer, door reed switch and lock feedback switch.
 
 Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a browser).
 
@@ -10,10 +10,10 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 |---|---|---|---|---|
 | Relay IN1 | D5 | 14 | OUTPUT | Active LOW. Write HIGH before `pinMode` so it doesn't click at boot. Pulse 500 ms max, never hold on. |
 | Buzzer | D8 | 15 | OUTPUT | Passive piezo through 100 Ω. Boot strap pin, must be LOW at boot. |
-| OLED SCL | D1 | 5 | I2C | SSD1306 128x64, address 0x3C |
+| OLED SCL | D1 | 5 | I2C | SSD1306 128x64, address 0x3C. Board header order: GND, VCC, SCL, SDA. Yellow/blue two-color panel (top 16 rows yellow) |
 | OLED SDA | D2 | 4 | I2C | |
-| Window reed | D7 | 13 | INPUT_PULLUP | To GND. LOW = closed |
-| Lock status switch | D6 | 12 | INPUT_PULLUP | To GND. Not wired yet |
+| Door reed | D7 | 13 | INPUT_PULLUP | To GND. LOW = door closed |
+| Lock feedback | D6 | 12 | INPUT_PULLUP | Lock's dry contact to GND, closed when locked (LOW = locked). Never 12V on this pin |
 
 ### Power
 - Relay JD-VCC jumper **removed**: JD-VCC ← Vin (5V coil supply), VCC ← 3V3 (logic), both GNDs to ESP GND.
@@ -27,14 +27,14 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 - 1N4007 diode (flyback across lock)
 - Passive piezo buzzer + 100 Ω resistor
 - 0.96" I2C OLED, SSD1306, 0x3C
-- Window reed switch + magnet
-- Lock status switch (microswitch / reed, TBD)
+- Door reed switch + magnet
+- 12V lock has a built-in feedback switch (dry contact, closed when locked)
 - Breadboard + jumpers
 
 ## Layout
 
 ```
-cage_lock/                main sketch: title + blue-area playlist per reed state (closed: JP lock slide-in + shake, messages, company; open: Close the Cage, JP unlock + shackle wiggle, CLOSE / THE / CAGE one word at a time); LED = reed; relay pulses on reed close or serial "p"
+cage_lock/                main sketch: OPEN/CLOSED + LOCKED/UNLOCKED status, playlist per state, auto-lock with feedback check
 docs/wiring.html          wiring page (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse

@@ -54,7 +54,7 @@ td.note{color:var(--muted)}
 <body>
 <main>
 <h1>Cage lock wiring</h1>
-<p class="lede">Breadboard layout for the NodeMCU, buzzer, relay, OLED screen and window reed switch. Pick a part to see only its wires. The ground jumper from j29 to the − rail is shown in every view, since everything shares it.</p>
+<p class="lede">Breadboard layout for the NodeMCU, buzzer, relay, OLED screen, door reed switch and lock feedback switch. Pick a part to see only its wires. The ground jumper from j29 to the − rail is shown in every view, since everything shares it.</p>
 
 <div class="controls" role="group" aria-label="Show connections">
   <button type="button" data-layer="all" aria-pressed="true">All</button>
@@ -62,6 +62,7 @@ td.note{color:var(--muted)}
   <button type="button" data-layer="relay" aria-pressed="false"><span class="swatch" style="background:#7F77DD"></span>Relay</button>
   <button type="button" data-layer="oled" aria-pressed="false"><span class="swatch" style="background:#1D9E75"></span>Screen</button>
   <button type="button" data-layer="reed" aria-pressed="false"><span class="swatch" style="background:#639922"></span>Reed switch</button>
+  <button type="button" data-layer="lock" aria-pressed="false"><span class="swatch" style="background:#BA7517"></span>Lock feedback</button>
 </div>
 
 <div class="figure">
@@ -141,17 +142,17 @@ td.note{color:var(--muted)}
   <text x="547" y="300" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="#7FD3FF">OLED</text>
   <g fill="#B4B2A9"><rect x="427" y="259" width="6" height="6"/><rect x="427" y="281" width="6" height="6"/><rect x="427" y="303" width="6" height="6"/><rect x="427" y="325" width="6" height="6"/></g>
   <g font-family="IBM Plex Sans Condensed, sans-serif" font-size="10.5" fill="#DCE8F5">
-    <text x="442" y="266">SDA</text><text x="442" y="288">SCL</text><text x="442" y="310">VCC</text><text x="442" y="332">GND</text>
+    <text x="442" y="266">GND</text><text x="442" y="288">VCC</text><text x="442" y="310">SCL</text><text x="442" y="332">SDA</text>
   </g>
-  <path d="M270 264 C370 264, 370 284, 430 284" fill="none" stroke="#E0A030" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="264" r="4" fill="#E0A030"/>
-  <path d="M270 278 C370 278, 370 262, 430 262" fill="none" stroke="#1D9E75" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="278" r="4" fill="#1D9E75"/>
-  <path d="M270 320 C370 320, 370 306, 430 306" fill="none" stroke="#E24B4A" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="320" r="4" fill="#E24B4A"/>
-  <path d="M270 334 C370 334, 370 328, 430 328" fill="none" stroke="#378ADD" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="334" r="4" fill="#378ADD"/>
+  <path d="M270 264 C370 264, 370 306, 430 306" fill="none" stroke="#E0A030" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="264" r="4" fill="#E0A030"/>
+  <path d="M270 278 C370 278, 370 328, 430 328" fill="none" stroke="#1D9E75" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="278" r="4" fill="#1D9E75"/>
+  <path d="M270 320 C370 320, 370 284, 430 284" fill="none" stroke="#E24B4A" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="320" r="4" fill="#E24B4A"/>
+  <path d="M270 334 C370 334, 370 262, 430 262" fill="none" stroke="#378ADD" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="334" r="4" fill="#378ADD"/>
 </g>
 
 <!-- reed -->
 <g id="layer-reed" class="layer">
-  <text x="500" y="388" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="11" class="svg-muted">reed switch</text>
+  <text x="500" y="388" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="11" class="svg-muted">door reed switch</text>
   <rect x="460" y="399" width="80" height="22" rx="11" fill="none" stroke="#8A8D86" stroke-width="1.2"/>
   <line x1="468" y1="411" x2="503" y2="408" stroke="#8A8D86" stroke-width="2"/><line x1="497" y1="413" x2="532" y2="410" stroke="#8A8D86" stroke-width="2"/>
   <line x1="440" y1="410" x2="460" y2="410" stroke="#8A8D86" stroke-width="2"/><line x1="540" y1="410" x2="560" y2="410" stroke="#8A8D86" stroke-width="2"/>
@@ -159,6 +160,16 @@ td.note{color:var(--muted)}
   <text x="500" y="464" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="10.5" class="svg-muted">magnet</text>
   <path d="M270 376 C370 376, 380 410, 440 410" fill="none" stroke="#639922" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="376" r="4" fill="#639922"/><circle cx="440" cy="410" r="4" fill="#639922"/>
   <path d="M560 410 C560 490, 328 480, 328 418" fill="none" stroke="#378ADD" stroke-width="3" stroke-linecap="round"/><circle cx="560" cy="410" r="4" fill="#378ADD"/><circle cx="328" cy="418" r="4" fill="#378ADD"/>
+</g>
+<!-- lock feedback -->
+<g id="layer-lock" class="layer">
+  <text x="515" y="542" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="11" class="svg-muted">lock feedback (closed = locked)</text>
+  <rect x="485" y="555" width="60" height="22" rx="3" fill="#26292B"/>
+  <line x1="489" y1="553" x2="541" y2="545" stroke="#8A8D86" stroke-width="2"/>
+  <line x1="455" y1="566" x2="485" y2="566" stroke="#8A8D86" stroke-width="2"/><line x1="545" y1="566" x2="575" y2="566" stroke="#8A8D86" stroke-width="2"/>
+  <text x="515" y="597" text-anchor="middle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="10.5" class="svg-muted">2 dry-contact wires from the lock</text>
+  <path d="M270 362 C420 362, 400 566, 455 566" fill="none" stroke="#BA7517" stroke-width="3" stroke-linecap="round"/><circle cx="270" cy="362" r="4" fill="#BA7517"/><circle cx="455" cy="566" r="4" fill="#BA7517"/>
+  <path d="M575 566 C630 620, 390 520, 328 404" fill="none" stroke="#378ADD" stroke-width="3" stroke-linecap="round"/><circle cx="575" cy="566" r="4" fill="#378ADD"/><circle cx="328" cy="404" r="4" fill="#378ADD"/>
 </g>
 </svg>
 </div>
@@ -171,7 +182,7 @@ td.note{color:var(--muted)}
 </div>
 
 <h2>Schematic</h2>
-<p class="lede">The same circuit drawn with symbols. The dashed parts are the 12V lock side and the lock status switch, which you'll wire after testing.</p>
+<p class="lede">The same circuit drawn with symbols. The dashed part is the 12V lock side.</p>
 <div class="figure">
 <svg viewBox="0 0 720 470" role="img" aria-labelledby="schTitle" font-family="IBM Plex Sans Condensed, sans-serif" font-size="12">
 <title id="schTitle">Schematic of the cage lock circuit</title>
@@ -192,6 +203,9 @@ td.note{color:var(--muted)}
   <line x1="420" y1="110" x2="560" y2="110"/><line x1="420" y1="140" x2="560" y2="140"/>
   <line x1="600" y1="90" x2="600" y2="74"/>
   <path d="M650 160 v12 m-8 0 h16 m-13 4 h10 m-7 4 h4"/>
+  <!-- lock feedback switch on D6 (dry contact, closed = locked) -->
+  <line x1="420" y1="200" x2="500" y2="200"/><line x1="500" y1="200" x2="538" y2="188"/><line x1="545" y1="200" x2="600" y2="200"/>
+  <path d="M600 200 v10 m-8 0 h16 m-13 4 h10 m-7 4 h4"/>
   <!-- reed -->
   <line x1="420" y1="270" x2="495" y2="270"/>
   <ellipse cx="525" cy="270" rx="38" ry="13"/>
@@ -208,9 +222,6 @@ td.note{color:var(--muted)}
 </g>
 <!-- dashed future parts -->
 <g class="wire-ink" fill="none" stroke-width="1.6" stroke-dasharray="5 4" stroke-linecap="round" opacity="0.8">
-  <!-- lock status switch on D6 -->
-  <line x1="420" y1="200" x2="500" y2="200"/><line x1="500" y1="200" x2="538" y2="188"/><line x1="545" y1="200" x2="600" y2="200"/>
-  <path d="M600 200 v10 m-8 0 h16 m-13 4 h10 m-7 4 h4"/>
   <!-- 12V lock circuit -->
   <line x1="85" y1="250" x2="85" y2="300"/>
   <line x1="70" y1="300" x2="100" y2="300"/><line x1="77" y1="310" x2="93" y2="310"/>
@@ -233,12 +244,13 @@ td.note{color:var(--muted)}
   <text x="570" y="114">SCL</text><text x="570" y="144">SDA</text>
   <text x="640" y="130" text-anchor="middle" font-family="IBM Plex Sans, sans-serif" font-weight="500">OLED</text>
   <text x="600" y="68" text-anchor="middle">3V3</text>
-  <text x="525" y="250" text-anchor="middle">reed switch</text>
+  <text x="525" y="250" text-anchor="middle">door reed switch</text>
+  <text x="520" y="180" text-anchor="middle">lock feedback (closed = locked)</text>
   <text x="480" y="334" text-anchor="middle">100Ω</text>
   <text x="565" y="384" text-anchor="middle">buzzer</text><text x="552" y="333" font-size="11">+</text>
 </g>
 <g class="svg-muted">
-  <text x="520" y="180" text-anchor="middle">lock status (later)</text>
+
   <text x="62" y="300" text-anchor="end">+</text><text x="62" y="318" text-anchor="end">12V</text>
   <text x="186" y="340">lock</text><text x="232" y="380">1N4007</text>
   <text x="40" y="455">12V lock side, wire after testing</text>
@@ -273,11 +285,15 @@ const data = {
     ["GND (j22)", "GND", ""]
   ],
   reed: [
-    ["D7 (j25)", "Reed wire 1", "Internal pull-up, no resistor"],
+    ["D7 (j25)", "Reed wire 1", "Internal pull-up, no resistor. LOW = door closed"],
     ["− rail", "Reed wire 2", "Either wire either way"]
+  ],
+  lock: [
+    ["D6 (j24)", "Lock feedback wire 1", "Dry contact, internal pull-up. LOW = locked"],
+    ["− rail", "Lock feedback wire 2", "Either wire either way. Never put 12V on these"]
   ]
 };
-const layers = ["buzzer","relay","oled","reed"];
+const layers = ["buzzer","relay","oled","reed","lock"];
 const tbody = document.getElementById("conn");
 function row(r){
   const tr = document.createElement("tr");

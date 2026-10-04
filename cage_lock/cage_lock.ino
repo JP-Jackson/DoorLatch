@@ -1,20 +1,22 @@
 // Cage Lock main sketch.
-// Yellow band (rows 0-15):
-//   Reed closed: "Cage Closed" static; normal for one full blue-area cycle,
-//                inverted for the next, alternating.
-//   Reed open:   "Cage OPEN" centered, flashing normal <-> inverted.
-// Blue area (rows 16-63) runs one of two playlists, restarting on reed change:
-//   Closed: JP + padlock slides in from the right, locks, padlock rattles (x and y)
-//           -> "Need something?" -> "Get A-1" scrolls in (24pt), "A-1" parks centered
-//              while "Get" leaves, holds 1 s -> "OR" (24pt)
-//           -> "Call Your Manager" slides in from the right
-//           -> "Polk Production Technologies" (fades) -> repeat.
-//   Open (inverted colors): "Close the Cage" -> JP unlock (shackle rises, wiggles)
-//           -> "CLOSE" / "THE" / "CAGE" one big word at a time -> JP unlock -> repeat.
+// Inputs: door reed D7 (LOW = closed), lock feedback D6 dry contact (LOW = locked).
+// Yellow band (rows 0-15): "CLOSED"/"OPEN" + padlock icon (locked/unlocked) at right.
+//   Closed: static; normal for one full blue-area cycle, inverted for the next.
+//   Open:   flashing normal <-> inverted.
+// Blue area (rows 16-63): playlist per state, restarting whenever either input changes.
+//   CLOSED + LOCKED:   JP + padlock slides in from the right, locks, padlock rattles
+//                      -> "Need something?" -> "Get A-1" (A-1 parks centered) -> "OR"
+//                      -> "Call Your Manager" slides in from the right
+//                      -> "Polk Production Technologies" (fades) -> repeat.
+//   CLOSED + UNLOCKED: JP unlock -> "LOCK" / "IT!" -> repeat (nag).
+//   OPEN + UNLOCKED:   "Close the Cage" -> JP unlock -> "CLOSE" / "THE" / "CAGE"
+//                      -> JP unlock -> repeat (inverted colors).
+//   OPEN + LOCKED:     "Lock is engaged!" / "Unlock to close door" warning.
 // On-board LED mirrors the reed: on = closed.
-// Relay (D5, active LOW) drives the 12V pulse lock: one 500 ms pulse each time
-// the reed closes (PULSE_ON_CLOSE), or send 'p' over serial (115200).
-// Never held on; 2 s minimum between pulses.
+// Relay (D5, active LOW) pulses the 12V lock 500 ms. When the door closes and the
+// lock still reads unlocked 1 s later, it pulses, checks feedback 2 s later and
+// retries once.
+// Serial 'p' (115200) fires a manual pulse. Never held on; 2 s minimum between pulses.
 // Libraries: Adafruit SSD1306, Adafruit GFX Library.
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -26,13 +28,16 @@
 #include <Fonts/FreeSansBold24pt7b.h>
 #include "logo.h"
 
-const uint8_t REED_PIN = D7;         // window reed to GND, LOW = closed
+const uint8_t REED_PIN = D7;         // door reed to GND, LOW = closed
+const uint8_t LOCK_PIN = D6;         // lock feedback dry contact to GND, closed when locked
+const uint8_t LOCKED_LEVEL = LOW;
 const uint8_t LED_PIN = LED_BUILTIN; // D4/GPIO2, active LOW
 const uint8_t RELAY_PIN = D5;        // relay IN1, active LOW
 const uint8_t RELAY_ON = LOW, RELAY_OFF = HIGH;
 const uint16_t PULSE_MS = 500;       // hard max for the lock coil - do not raise
 const uint16_t PULSE_GAP_MS = 2000;  // let the solenoid cool between pulses
-const bool PULSE_ON_CLOSE = true;    // reed closing fires the relay
+const bool AUTO_LOCK = true;         // door closes + unlocked -> pulse, verify, retry once
+const uint16_t AUTO_LOCK_DELAY_MS = 1000;  // let a self-latching lock report first
 const uint16_t FRAME_MS = 25;
 const uint16_t DEBOUNCE_MS = 50;
 
@@ -57,8 +62,9 @@ const uint16_t GAP_MS = 300;         // blank between screens
 // Open message (two lines, FreeSans Bold 12pt, max ~128 px each)
 const char OPEN_L1[] = "Close the";
 const char OPEN_L2[] = "Cage";
-const uint16_t WORD_MS = 700;        // "CLOSE" / "THE" / "CAGE" each
-const uint16_t LAST_WORD_MS = 1200;  // "CAGE" holds a bit longer
+const uint16_t WORD_MS = 700;        // "CLOSE" / "THE" / "CAGE" / "LOCK" each
+const uint16_t LAST_WORD_MS = 1200;  // "CAGE" / "IT!" hold a bit longer
+const uint16_t WARN_MS = 1800;       // each half of the open+locked warning
 
 const int16_t BAND_H = 16, BLUE_Y = 16, BLUE_H = 48;
 const int16_t LOGO_Y = BLUE_Y + (BLUE_H - JP_H) / 2;
@@ -68,6 +74,12 @@ const uint8_t BAYER[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 
 int reedStable = -1, reedLast = -1;
+int lockStable = -1, lockLast = -1;
+uint32_t lockChange = 0;
+bool lockPending = false;            // auto-lock waiting for feedback
+bool autoLockArmed = false;          // door just closed, decide after the delay
+uint32_t closedAt = 0;
+uint8_t lockRetries = 0;
 bool relayActive = false;
 uint32_t relayOnAt = 0, relayOffAt = 0;
 uint32_t reedChange = 0, lastFrame = 0;
@@ -79,18 +91,25 @@ uint32_t tTimer = 0;
 // Blue area: play the current playlist; Polk fades, everything else cuts.
 enum BluePhase { B_IN, B_HOLD, B_OUT, B_GAP };
 BluePhase bPhase = B_IN;
-enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENWORDS };
-const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_POLK};
-const uint8_t OPEN_LIST[] = {I_OPENMSG, I_UNLOCK, I_OPENWORDS, I_UNLOCK};
+enum BlueItem { I_LOCK, I_MSG, I_POLK, I_UNLOCK, I_OPENMSG, I_OPENWORDS, I_LOCKIT, I_WARN };
+const uint8_t CLOSED_LIST[] = {I_LOCK, I_MSG, I_POLK};          // closed + locked
+const uint8_t NAG_LIST[] = {I_UNLOCK, I_LOCKIT};                // closed + unlocked
+const uint8_t OPEN_LIST[] = {I_OPENMSG, I_UNLOCK, I_OPENWORDS, I_UNLOCK};  // open + unlocked
+const uint8_t WARN_LIST[] = {I_WARN};                           // open + locked
 uint8_t listPos = 0;
 uint8_t item = I_LOCK;
 uint8_t fadeLevel = 0;               // 0 = blank, 16 = fully drawn
 uint32_t bTimer = 0;
 
 bool isOpen() { return reedStable == HIGH; }
-const char *titleText() { return isOpen() ? "Cage OPEN" : "Cage Closed"; }
+bool isLocked() { return lockStable == LOCKED_LEVEL; }
+const char *titleText() { return isOpen() ? "OPEN" : "CLOSED"; }
+const char *stateText() {
+  if (isOpen()) return isLocked() ? "OPEN - LOCKED" : "OPEN - UNLOCKED";
+  return isLocked() ? "CLOSED - LOCKED" : "CLOSED - UNLOCKED";
+}
 
-// Size-2 text with a narrow 8 px space so "Cage Closed" fits in 128 px.
+// Size-2 text; spaces are a narrow 8 px.
 int16_t titleWidth(const char *s) {
   int16_t w = 0;
   for (; *s; s++) w += (*s == ' ') ? 8 : 12;
@@ -116,22 +135,32 @@ void resetTitle() {
   tTimer = millis();
 }
 
+// 12x15 padlock icon at the right end of the band. Unlocked lifts the
+// shackle so there's a gap above the body.
+void drawLockIcon(uint16_t fg, uint16_t bg) {
+  const int16_t x = 114, by = 8;
+  int16_t sy = isLocked() ? 2 : -1;
+  display.fillRoundRect(x + 2, sy, 8, 9, 4, fg);
+  display.fillRoundRect(x + 4, sy + 2, 4, 9, 2, bg);
+  display.fillRect(x, by, 12, 8, fg);
+  display.fillRect(x + 5, by + 2, 2, 3, bg);  // keyhole
+}
+
 void drawTitle() {
   const char *t = titleText();
   int16_t w = titleWidth(t);
+  bool inv = isOpen() ? flashInv : closedInv;
+  uint16_t bg = inv ? SSD1306_WHITE : SSD1306_BLACK;
+  uint16_t fg = inv ? SSD1306_BLACK : SSD1306_WHITE;
   display.setFont(NULL);
 
-  if (!isOpen()) {
-    // Closed: static, colors set per playlist cycle
-    display.fillRect(0, 0, 128, BAND_H, closedInv ? SSD1306_WHITE : SSD1306_BLACK);
-    printTitle(t, (128 - w) / 2, closedInv ? SSD1306_BLACK : SSD1306_WHITE);
-    return;
-  }
+  // Text centered in the space left of the icon
+  display.fillRect(0, 0, 128, BAND_H, bg);
+  printTitle(t, (112 - w) / 2, fg);
+  drawLockIcon(fg, bg);
 
-  // Open: centered, flash between normal and inverted
-  display.fillRect(0, 0, 128, BAND_H, flashInv ? SSD1306_WHITE : SSD1306_BLACK);
-  printTitle(t, (128 - w) / 2, flashInv ? SSD1306_BLACK : SSD1306_WHITE);
-  if (millis() - tTimer >= FLASH_MS) {
+  // Open: flash between normal and inverted. Closed: set per playlist cycle.
+  if (isOpen() && millis() - tTimer >= FLASH_MS) {
     tTimer = millis();
     flashInv = !flashInv;
   }
@@ -261,6 +290,19 @@ void drawOpenWords(uint32_t t) {
   else drawWord("CAGE", &FreeSansBold24pt7b, -2, 34);
 }
 
+// Closed but unlocked: "LOCK" (134 px in 24pt, squeezed 3 px) / "IT!"
+void drawLockItWords(uint32_t t) {
+  if (t < WORD_MS) drawWord("LOCK", &FreeSansBold24pt7b, -3, 34);
+  else drawWord("IT!", &FreeSansBold24pt7b, 0, 34);
+}
+
+// Open but locked: the bolt is out, so the door can't latch.
+void drawWarn(uint32_t t) {
+  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
+  if (t < WARN_MS) drawMessage(&FreeSansBold12pt7b, "Lock is", "engaged!", 0, SSD1306_BLACK);
+  else drawMessage(&FreeSansBold12pt7b, "Unlock to", "close door", 0, SSD1306_BLACK);
+}
+
 // "Need something?" -> "Get A-1" -> "OR" -> inverted "Call Your Manager"
 // panel slides in from the right. t = ms into the hold.
 void drawMsgScene(uint32_t t) {
@@ -327,22 +369,35 @@ uint16_t itemHoldMs(uint8_t i) {
     case I_POLK: return TEXT_HOLD_MS;
     case I_UNLOCK: return UNLOCK_MS;
     case I_OPENWORDS: return 2 * WORD_MS + LAST_WORD_MS;
+    case I_LOCKIT: return WORD_MS + LAST_WORD_MS;
+    case I_WARN: return 2 * WARN_MS;
     default: return OPEN_MSG_MS;
   }
 }
 
-// Start the playlist for the current reed state from the top, no fade.
+// Playlist for the current door + lock state.
+const uint8_t *curList(uint8_t &n) {
+  if (isOpen()) {
+    if (isLocked()) { n = sizeof(WARN_LIST); return WARN_LIST; }
+    n = sizeof(OPEN_LIST); return OPEN_LIST;
+  }
+  if (isLocked()) { n = sizeof(CLOSED_LIST); return CLOSED_LIST; }
+  n = sizeof(NAG_LIST); return NAG_LIST;
+}
+
+// Start the playlist for the current state from the top, no fade.
 void startPlaylist() {
+  uint8_t n;
   listPos = 0;
-  item = isOpen() ? OPEN_LIST[0] : CLOSED_LIST[0];
+  item = curList(n)[0];
   fadeLevel = 16;
   bPhase = B_HOLD;
   bTimer = millis();
 }
 
 void nextItem() {
-  const uint8_t *list = isOpen() ? OPEN_LIST : CLOSED_LIST;
-  uint8_t n = isOpen() ? sizeof(OPEN_LIST) : sizeof(CLOSED_LIST);
+  uint8_t n;
+  const uint8_t *list = curList(n);
   listPos = (listPos + 1) % n;
   if (listPos == 0 && !isOpen()) closedInv = !closedInv;  // new cycle
   item = list[listPos];
@@ -361,6 +416,8 @@ void drawBlue() {
       case I_UNLOCK: drawUnlockAnim(t); break;
       case I_OPENMSG: drawOpenMsg(); break;
       case I_OPENWORDS: drawOpenWords(t); break;
+      case I_LOCKIT: drawLockItWords(t); break;
+      case I_WARN: drawWarn(t); break;
     }
     applyFade(fadeLevel);
   }
@@ -404,7 +461,7 @@ void pulseRelay() {
   digitalWrite(RELAY_PIN, RELAY_ON);
   relayActive = true;
   relayOnAt = millis();
-  Serial.println(F("Unlock pulse"));
+  Serial.println(F("Relay pulse"));
 }
 
 // Called every loop: ends the pulse on time and keeps the coil off otherwise.
@@ -414,6 +471,34 @@ void serviceRelay() {
     relayOffAt = millis();
   }
   if (!relayActive) digitalWrite(RELAY_PIN, RELAY_OFF);
+}
+
+// Auto-lock: pulse when the door closes unlocked, then check the feedback
+// once the cool-down passes; retry once, then give up and report.
+void startAutoLock() {
+  if (!AUTO_LOCK || isOpen() || isLocked()) return;
+  lockPending = true;
+  lockRetries = 0;
+  pulseRelay();
+}
+
+void serviceAutoLock() {
+  if (autoLockArmed && millis() - closedAt >= AUTO_LOCK_DELAY_MS) {
+    autoLockArmed = false;
+    startAutoLock();
+  }
+  if (!lockPending || relayActive || millis() - relayOffAt < PULSE_GAP_MS) return;
+  if (isOpen() || isLocked()) {
+    lockPending = false;
+    if (isLocked()) Serial.println(F("Lock confirmed"));
+  } else if (lockRetries == 0) {
+    lockRetries = 1;
+    Serial.println(F("Lock not confirmed, retrying"));
+    pulseRelay();
+  } else {
+    lockPending = false;
+    Serial.println(F("Lock did not confirm"));
+  }
 }
 
 // ---------- main ----------
@@ -426,6 +511,7 @@ void setup() {
   relayOffAt = millis() - PULSE_GAP_MS;
 
   pinMode(REED_PIN, INPUT_PULLUP);
+  pinMode(LOCK_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   Serial.begin(115200);
 
@@ -440,16 +526,18 @@ void setup() {
   display.clearDisplay();
 
   reedStable = reedLast = digitalRead(REED_PIN);
+  lockStable = lockLast = digitalRead(LOCK_PIN);
   digitalWrite(LED_PIN, reedStable);
-  Serial.println(titleText());
+  Serial.println(stateText());
   startPlaylist();
 }
 
 void loop() {
   if (Serial.available() && Serial.read() == 'p') pulseRelay();
   serviceRelay();
+  serviceAutoLock();
 
-  // Window reed, debounced. LED on (LOW) when closed.
+  // Door reed, debounced. LED on (LOW) when closed.
   int r = digitalRead(REED_PIN);
   if (r != reedLast) {
     reedLast = r;
@@ -458,10 +546,23 @@ void loop() {
   if (millis() - reedChange >= DEBOUNCE_MS && r != reedStable) {
     reedStable = r;
     digitalWrite(LED_PIN, reedStable);
-    Serial.println(titleText());
+    Serial.println(stateText());
     resetTitle();
     startPlaylist();
-    if (PULSE_ON_CLOSE && reedStable == LOW) pulseRelay();
+    autoLockArmed = !isOpen();
+    closedAt = millis();
+  }
+
+  // Lock feedback, debounced.
+  int l = digitalRead(LOCK_PIN);
+  if (l != lockLast) {
+    lockLast = l;
+    lockChange = millis();
+  }
+  if (millis() - lockChange >= DEBOUNCE_MS && l != lockStable) {
+    lockStable = l;
+    Serial.println(stateText());
+    startPlaylist();
   }
 
   if (millis() - lastFrame >= FRAME_MS) {
