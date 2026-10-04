@@ -55,13 +55,15 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) with WIFI_SSID, WIFI_PASS (2.4 GHz) and API_KEY. Change it and reflash when moving networks.
 
 - `GET http://cagelock.local/status` -> `{"door":"closed","chain":"locked","state":"CLOSED & LOCKED","rssi":-61,"relay":false}`
-- `PUT http://cagelock.local/unlock` with header `X-Api-Key: <API_KEY>` -> one 500 ms relay pulse. 200 ok, 401 bad key, 429 too soon.
+- `http://cagelock.local/` -> simple page: live status, name box, Unlock button (API key entered once, saved in that browser).
+- `PUT http://cagelock.local/unlock?name=JP` with header `X-Api-Key: <API_KEY>` -> unlock sequence: "Unlocking the Cage" / "for" / JP / "in" / 3 / 2 / 1 -> relay pulse -> "UNLOCKED". Name optional (max 16 chars). 202 accepted (`fires_in_ms`), 401 bad key, 409 busy.
+- Serial: `unlock` or `unlock JP` runs the same sequence.
 - CORS open for a browser web app. Band shows WiFi bars at the right; blinking X = not connected.
 
 PowerShell test:
 ```powershell
 Invoke-RestMethod http://cagelock.local/status
-Invoke-RestMethod -Method Put http://cagelock.local/unlock -Headers @{ "X-Api-Key" = "<API_KEY>" }
+Invoke-RestMethod -Method Put "http://cagelock.local/unlock?name=JP" -Headers @{ "X-Api-Key" = "<API_KEY>" }
 ```
 
 ## Parts

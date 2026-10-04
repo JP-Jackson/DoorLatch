@@ -18,14 +18,21 @@
 // WiFi: joins the network in secrets.h in the background (display and inputs keep
 //   running if it's down). Band shows signal bars at the right; a blinking X when
 //   not connected. mDNS name: cagelock.local
+// Web page: http://cagelock.local/ shows live status, a name box and an Unlock
+//   button. The API key is typed into the page once and kept in that browser.
 // Web API (port 80):
 //   GET /status  -> {"door":"closed","chain":"locked","state":"CLOSED & LOCKED",
 //                    "rssi":-61,"relay":false}
-//   PUT /unlock  -> one 500 ms relay pulse. Needs header "X-Api-Key: <API_KEY>".
-//                   200 ok, 401 bad/missing key, 429 too soon (2 s cool-down).
+//   PUT /unlock?name=JP -> runs the unlock sequence (name optional, max 16 chars).
+//                   Needs header "X-Api-Key: <API_KEY>". 202 accepted (relay fires
+//                   at the end of the countdown), 401 bad/missing key, 409 busy.
 //   CORS is open so a browser web app can call it.
-// Relay (D5, active LOW): never fires on its own. Typing "unlock" + Enter over
-// serial (115200) sends one manual 500 ms pulse; 2 s minimum between pulses.
+// Unlock sequence (blue area, one big word at a time on a lit background):
+//   "Unlocking / the Cage" -> "for" -> NAME -> "in" -> 3 -> 2 -> 1 -> relay pulse
+//   -> "UNLOCKED". Without a name it skips "for" + NAME. Input changes during the
+//   sequence don't interrupt it; the state playlist resumes afterwards.
+// Relay (D5, active LOW): never fires on its own. "unlock" or "unlock NAME" + Enter
+// over serial (115200) runs the unlock sequence; 2 s minimum between pulses.
 // Serial is ignored for the first 3 s after boot so noise can't trigger it.
 // Boot/power loss: D5 (GPIO14) is high-impedance until setup() drives it HIGH,
 // so the relay stays off through reset, brownout and power-up.
@@ -333,12 +340,14 @@ void drawBlockWord(const char *w) {
   int16_t n = strlen(w);
   int16_t sx = 128 / (6 * n - 1);
   if (sx > 8) sx = 8;
+  if (sx < 1) sx = 1;
+  int16_t sy = min(6, 3 * (int)sx);  // keep long names from looking like needles
   int16_t width = n * 6 * sx - sx;
   display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
   display.setFont(NULL);
-  display.setTextSize(sx, 6);
+  display.setTextSize(sx, sy);
   display.setTextColor(SSD1306_BLACK);
-  display.setCursor((128 - width) / 2, BLUE_Y + (BLUE_H - 42) / 2);
+  display.setCursor((128 - width) / 2, BLUE_Y + (BLUE_H - 7 * sy) / 2);
   display.print(w);
   display.setTextSize(1);
 }
@@ -421,6 +430,81 @@ void applyFade(uint8_t level) {
       if (BAYER[y & 3][x & 3] >= level) display.drawPixel(x, y, SSD1306_BLACK);
 }
 
+// ---------- unlock sequence ----------
+
+void startPlaylist();
+bool pulseRelay();
+
+const uint16_t SEQ_INTRO_MS = 1500, SEQ_WORD_MS = 600, SEQ_NAME_MS = 1500;
+const uint16_t SEQ_COUNT_MS = 1000, SEQ_DONE_MS = 2000;
+bool seqActive = false, seqFired = false;
+uint32_t seqStart = 0;
+char seqName[17] = "";
+
+uint32_t seqFireAt() {
+  uint32_t t = SEQ_INTRO_MS;
+  if (seqName[0]) t += SEQ_WORD_MS + SEQ_NAME_MS;
+  return t + SEQ_WORD_MS + 3 * SEQ_COUNT_MS;  // "in" + 3, 2, 1
+}
+
+// Keep printable ASCII, trim, max 16 chars.
+void setSeqName(const char *n) {
+  uint8_t len = 0;
+  while (*n == ' ') n++;
+  for (; *n && len < sizeof(seqName) - 1; n++)
+    if (*n >= 32 && *n <= 126) seqName[len++] = *n;
+  while (len && seqName[len - 1] == ' ') len--;
+  seqName[len] = 0;
+}
+
+bool startUnlockSeq(const char *name) {
+  if (seqActive || relayActive) return false;
+  setSeqName(name);
+  seqActive = true;
+  seqFired = false;
+  seqStart = millis();
+  Serial.print(F("Unlock sequence for: "));
+  Serial.println(seqName[0] ? seqName : "(no name)");
+  return true;
+}
+
+void drawSeq(uint32_t t) {
+  if (t < SEQ_INTRO_MS) {
+    display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
+    drawMessage(&FreeSansBold12pt7b, "Unlocking", "the Cage", 0, SSD1306_BLACK);
+    return;
+  }
+  t -= SEQ_INTRO_MS;
+  if (seqName[0]) {
+    if (t < SEQ_WORD_MS) { drawBlockWord("for"); return; }
+    t -= SEQ_WORD_MS;
+    if (t < SEQ_NAME_MS) { drawBlockWord(seqName); return; }
+    t -= SEQ_NAME_MS;
+  }
+  if (t < SEQ_WORD_MS) { drawBlockWord("in"); return; }
+  t -= SEQ_WORD_MS;
+  if (t < 3 * SEQ_COUNT_MS) {
+    static const char *N[] = {"3", "2", "1"};
+    drawBlockWord(N[t / SEQ_COUNT_MS]);
+    return;
+  }
+  drawBlockWord("UNLOCKED");
+}
+
+// Fires the relay at the end of the countdown, then hands the screen back.
+void serviceSeq() {
+  if (!seqActive) return;
+  uint32_t t = millis() - seqStart, fireAt = seqFireAt();
+  if (!seqFired && t >= fireAt) {
+    seqFired = true;
+    pulseRelay();
+  }
+  if (t >= fireAt + SEQ_DONE_MS) {
+    seqActive = false;
+    startPlaylist();
+  }
+}
+
 bool itemFades(uint8_t i) { return i == I_POLK; }
 
 uint16_t itemHoldMs(uint8_t i) {
@@ -467,6 +551,10 @@ void nextItem() {
 void drawBlue() {
   display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_BLACK);
   uint32_t now = millis();
+  if (seqActive) {
+    drawSeq(now - seqStart);
+    return;
+  }
   uint32_t t = (bPhase == B_HOLD) ? now - bTimer : (bPhase == B_OUT ? 60000 : 0);
 
   if (bPhase != B_GAP) {
@@ -535,16 +623,17 @@ void serviceRelay() {
   if (!relayActive) digitalWrite(RELAY_PIN, RELAY_OFF);
 }
 
-// Manual pulse: the whole word "unlock" on a line. Anything else is ignored.
+// "unlock" or "unlock NAME" on a line runs the unlock sequence. Anything else is ignored.
 void serviceSerial() {
-  static char buf[12];
+  static char buf[32];
   static uint8_t len = 0;
   while (Serial.available()) {
     char c = Serial.read();
     if (millis() < SERIAL_IGNORE_MS) { len = 0; continue; }
     if (c == '\n' || c == '\r') {
       buf[len] = 0;
-      if (len && strcmp(buf, "unlock") == 0) pulseRelay();
+      if (len && strcmp(buf, "unlock") == 0) startUnlockSeq("");
+      else if (len && strncmp(buf, "unlock ", 7) == 0) startUnlockSeq(buf + 7);
       len = 0;
     } else if (len < sizeof(buf) - 1) {
       buf[len++] = c;
@@ -560,6 +649,34 @@ void sendCors() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
   server.sendHeader("Access-Control-Allow-Headers", "X-Api-Key, Content-Type");
+}
+
+const char PAGE[] PROGMEM = R"HTML(<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Cage Lock</title>
+<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;max-width:420px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem}#st{font-size:1.6rem;font-weight:700;padding:14px;border-radius:10px;background:#222;text-align:center}
+.bad{color:#ffb000}input,button{width:100%;box-sizing:border-box;font-size:1.1rem;padding:12px;margin:6px 0;border-radius:8px;border:1px solid #444;background:#1b1b1b;color:#eee}
+button{background:#1f6b4a;border:0;font-weight:700}button:disabled{opacity:.5}#msg{min-height:1.4em;color:#aaa}small{color:#888}</style></head>
+<body><h1>Cage Lock</h1><div id="st">...</div><p><small id="sig"></small></p>
+<input id="name" placeholder="Name (optional)" maxlength="16">
+<button id="go">Unlock</button><div id="msg"></div>
+<details><summary><small>API key</small></summary><input id="key" placeholder="API key"></details>
+<script>
+const $=id=>document.getElementById(id);$('key').value=localStorage.k||'';
+$('key').onchange=()=>localStorage.k=$('key').value;
+async function poll(){try{const s=await(await fetch('/status')).json();
+$('st').textContent=s.state;$('st').className=s.state=='CLOSED & LOCKED'?'':'bad';
+$('sig').textContent='WiFi '+s.rssi+' dBm'+(s.relay?' - relay ON':'');}catch(e){$('st').textContent='offline';}}
+$('go').onclick=async()=>{$('go').disabled=true;localStorage.k=$('key').value;
+try{const r=await fetch('/unlock?name='+encodeURIComponent($('name').value),{method:'PUT',headers:{'X-Api-Key':$('key').value}});
+const j=await r.json();$('msg').textContent=r.status==202?'Unlocking in '+(j.fires_in_ms/1000).toFixed(1)+' s':
+r.status==401?'Wrong API key':'Busy, try again';}catch(e){$('msg').textContent='Error';}
+setTimeout(()=>$('go').disabled=false,3000);};
+poll();setInterval(poll,2000);
+</script></body></html>)HTML";
+
+void handleRoot() {
+  server.send_P(200, "text/html", PAGE);
 }
 
 void handleStatus() {
@@ -585,8 +702,14 @@ void handleUnlock() {
     return;
   }
   Serial.println(F("Web unlock request"));
-  if (pulseRelay()) server.send(200, "application/json", "{\"ok\":true}");
-  else server.send(429, "application/json", "{\"ok\":false,\"error\":\"too soon\"}");
+  if (startUnlockSeq(server.arg("name").c_str())) {
+    String j = "{\"ok\":true,\"fires_in_ms\":";
+    j += (long)seqFireAt();
+    j += "}";
+    server.send(202, "application/json", j);
+  } else {
+    server.send(409, "application/json", "{\"ok\":false,\"error\":\"busy\"}");
+  }
 }
 
 void handlePreflight() {
@@ -603,6 +726,7 @@ void setupWeb() {
 
   const char *keys[] = {"X-Api-Key"};
   server.collectHeaders(keys, 1);
+  server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/unlock", HTTP_PUT, handleUnlock);
   server.on("/status", HTTP_OPTIONS, handlePreflight);
@@ -660,6 +784,7 @@ void setup() {
 void loop() {
   serviceSerial();
   serviceWeb();
+  serviceSeq();
   serviceRelay();
 
   // Door reed, debounced. LED on (LOW) when closed.
