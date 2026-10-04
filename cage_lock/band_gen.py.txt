@@ -16,7 +16,8 @@ def render(t):
   a=a>TH
   xs=np.where(a.any(0))[0]; return a[:,xs[0]:xs[-1]+1]
 S=['CLOSED & LOCKED','CLOSED & UNLOCKED','OPEN & UNLOCKED','OPEN & LOCKED','NO WIFI',
-   'WiFi Signal: GREAT','WiFi Signal: GOOD','WiFi Signal: FAIR','WiFi Signal: WEAK','WiFi Signal: BAD']
+   'WiFi Signal: GREAT','WiFi Signal: GOOD','WiFi Signal: FAIR','WiFi Signal: WEAK','WiFi Signal: BAD',
+   'Unlocking remotely','Please standby','UNLOCKED']
 out=['// Band phrases pre-rendered from DejaVu Sans Bold (16 px, squeezed to 65%),',
      '// 16 rows tall, 1 bit, MSB first. Generated; edit the list in band_gen.py.',
      '#pragma once','#include <Arduino.h>','']

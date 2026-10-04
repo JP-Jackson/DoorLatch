@@ -30,7 +30,9 @@
 //   CORS is open so a browser web app can call it.
 // Unlock sequence (blue area, black bold text on a lit background):
 //   "Unlocking / the Cage" -> "for" -> NAME scrolls across (24pt, any length)
-//   -> "in" -> 3 -> 2 -> 1 (24pt) -> relay pulse -> "UNLOCKED" (12pt, biggest that fits). Without a name it skips "for" + NAME. Input changes during the
+//   -> "in" -> 3 -> 2 -> 1 (24pt) -> relay pulse -> "UNLOCKED" (12pt, biggest that fits).
+//   Band: "Unlocking remotely" / "Please standby" alternating until the relay fires,
+//   then "UNLOCKED". Without a name it skips "for" + NAME. Input changes during the
 //   sequence don't interrupt it; the state playlist resumes afterwards.
 // Relay (D5, active LOW): never fires on its own. "unlock" or "unlock NAME" + Enter
 // over serial (115200) runs the unlock sequence; 2 s minimum between pulses.
@@ -194,10 +196,18 @@ bool drawBandBitmap(const char *t, uint16_t color) {
   return false;
 }
 
+extern bool seqActive, seqFired;
+extern uint32_t seqStart;
+const uint16_t SEQ_BAND_SWAP_MS = 1500;
+
 void drawTitle() {
   static char wifiText[20];
   const char *t = titleText();
-  if (millis() % WIFI_EVERY_MS < WIFI_SHOW_MS) {
+  if (seqActive) {
+    // Web/serial unlock: alternate the two phrases until the relay fires.
+    t = seqFired ? "UNLOCKED"
+        : ((millis() - seqStart) / SEQ_BAND_SWAP_MS) % 2 ? "Please standby" : "Unlocking remotely";
+  } else if (millis() % WIFI_EVERY_MS < WIFI_SHOW_MS) {
     int8_t bars = wifiBars();
     if (bars < 0) strcpy(wifiText, "NO WIFI");
     else {
@@ -207,7 +217,7 @@ void drawTitle() {
     t = wifiText;
   }
   int16_t w = titleWidth(t);
-  bool inv = isOpen() ? flashInv : (millis() / CLOSED_INV_MS) % 2;
+  bool inv = seqActive ? false : isOpen() ? flashInv : (millis() / CLOSED_INV_MS) % 2;
   display.setFont(NULL);
   display.fillRect(0, 0, 128, BAND_H, inv ? SSD1306_WHITE : SSD1306_BLACK);
   uint16_t fg = inv ? SSD1306_BLACK : SSD1306_WHITE;
