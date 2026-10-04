@@ -391,22 +391,28 @@ void drawNotLocked(uint32_t t) {
   else drawBlockWord("LOCKED!");
 }
 
-// WiFi signal screen: "WiFi" (12pt) over the rating (18pt, 12pt if it won't fit).
+// WiFi signal screen: "WiFi" (12pt) over the rating (18pt, or the biggest that fits).
+// Offline with the setup hotspot up: "Join WiFi" / "CageLock".
+// Offline before the hotspot starts: "WiFi" / "Connecting".
 const uint16_t WIFI_MS = 2500;
 int8_t wifiBars();
 void drawWifiScreen() {
   static const char *Q[] = {"BAD", "WEAK", "FAIR", "GOOD", "GREAT"};
   int8_t bars = wifiBars();
-  const char *q = bars < 0 ? "OFFLINE" : Q[bars];
+  bool setup = bars < 0 && wm.getConfigPortalActive();
+  const char *q = setup ? "CageLock" : bars < 0 ? "Connecting" : Q[bars];
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
   display.setFont(&FreeSansBold12pt7b);
-  printCentered("WiFi", 35);
+  printCentered(setup ? "Join WiFi" : "WiFi", 35);
   int16_t x1, y1;
   uint16_t w, h;
-  display.setFont(&FreeSansBold18pt7b);
-  display.getTextBounds(q, 0, 0, &x1, &y1, &w, &h);
-  if (w > 126) display.setFont(&FreeSansBold12pt7b);
+  static const GFXfont *SIZES[] = {&FreeSansBold18pt7b, &FreeSansBold12pt7b, &FreeSansBold9pt7b};
+  for (const GFXfont *f : SIZES) {  // biggest that fits 126 px
+    display.setFont(f);
+    display.getTextBounds(q, 0, 0, &x1, &y1, &w, &h);
+    if (w <= 126) break;
+  }
   printCentered(q, 62);
   display.setFont(NULL);
 }
