@@ -4,6 +4,9 @@ ESP8266 (HiLetgo NodeMCU, CP2102) Cage Lock controller: 12V pulse-type cabinet l
 
 Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a browser).
 
+**Picking this up?** Start with [`docs/HANDOVER.md`](docs/HANDOVER.md) (status, next steps) and
+[`docs/REMOTE_PLAN.md`](docs/REMOTE_PLAN.md) (remote unlock via Raspberry Pi + Cloudflare Tunnel + Base44).
+
 ## Pin map
 
 | Function | NodeMCU | GPIO | Mode | Notes |
@@ -111,7 +114,9 @@ epoch,local_time,uptime_s,event,detail
 
 ```
 cage_lock/                main sketch: door + chain-lock status (band shows e.g. CLOSED & LOCKED), playlist per state, relay via serial "unlock" or web PUT /unlock (API key)
-docs/wiring.html          wiring page (keep in sync with hardware changes)
+docs/wiring.html          wiring page
+docs/HANDOVER.md          current status, next steps, how to resume
+docs/REMOTE_PLAN.md       remote unlock architecture, Base44 contracts, tunnel setup (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse
 tests/oled_test/          scrolling "Cage Locked/Unlocked" title (D6) + JP logo
