@@ -19,6 +19,20 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 - Relay JD-VCC jumper **removed**: JD-VCC ← Vin (5V coil supply), VCC ← 3V3 (logic), both GNDs to ESP GND.
 - 12V lock side is isolated through the relay contacts (COM/NO), 1N4007 flyback diode across the lock. 12V negative does **not** tie to ESP GND.
 
+## Status table (cage_lock)
+
+| Door reed (D7) | Chain feedback (D6) | State | Yellow band (swaps every 1 s) | Band style | Blue area loop | On-board LED | Serial |
+|---|---|---|---|---|---|---|---|
+| LOW (magnet on) | LOW (contact closed) | **CLOSED + LOCKED** (normal) | CLOSED / LOCKED | Static; normal one loop, inverted the next | JP lock slides in, shackle drops, padlock rattles -> Need something? -> Get A-1 (A-1 parks) -> OR -> Call Your Manager slides in -> Polk / Production / Technologies (fades) | On | `CLOSED - LOCKED` |
+| LOW (magnet on) | HIGH (contact open) | **CLOSED + UNLOCKED** | CLOSED / UNLOCKED | Same as above | Closed / but -> NOT -> LOCKED! (lit background) | On | `CLOSED - UNLOCKED` |
+| HIGH (magnet off) | HIGH (contact open) | **OPEN + UNLOCKED** (cage in use) | OPEN / UNLOCKED | Flashes normal/inverted every 0.3 s | Close the / Cage -> JP unlock (shackle rises, wiggles) -> CLOSE / THE / CAGE -> JP unlock (lit background) | Off | `OPEN - UNLOCKED` |
+| HIGH (magnet off) | LOW (contact closed) | **OPEN + LOCKED** (shouldn't happen) | OPEN / LOCKED | Flashes normal/inverted every 0.3 s | Chain is / locked but / door open! (lit background) | Off | `OPEN - LOCKED` |
+
+- Both inputs use the internal pull-up: LOW = switch closed to GND. A disconnected wire reads HIGH (OPEN / UNLOCKED).
+- Any input change restarts that state's loop and resets the band to the door word.
+- The relay never fires on a state change; only serial `unlock` + Enter sends a 500 ms pulse.
+- Power-up/reset: D5 (GPIO14) stays high-impedance until setup() drives it HIGH, so the relay stays off. Wire the lock on COM + NO (never NC) and use a fail-secure lock.
+
 ## Parts
 
 - HiLetgo NodeMCU ESP8266 (CP2102)
