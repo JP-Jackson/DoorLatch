@@ -23,30 +23,30 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 
 **1. CLOSED + LOCKED** (normal)
 - Reed LOW, Chain LOW
-- Band: CLOSED / LOCKED, static (normal one loop, inverted the next)
+- Band: CLOSED & LOCKED, static (normal one loop, inverted the next)
 - Screen: JP lock -> Need something? -> Get A-1 -> OR -> Call Your Manager -> Polk
 - LED on
 
 **2. CLOSED + UNLOCKED**
 - Reed LOW, Chain HIGH
-- Band: CLOSED / UNLOCKED, static
+- Band: CLOSED & UNLOCKED, static
 - Screen: Closed but -> NOT -> LOCKED!
 - LED on
 
 **3. OPEN + UNLOCKED** (cage in use)
 - Reed HIGH, Chain HIGH
-- Band: OPEN / UNLOCKED, flashing
+- Band: OPEN & UNLOCKED, flashing
 - Screen: Close the Cage -> JP unlock -> CLOSE / THE / CAGE -> JP unlock
 - LED off
 
 **4. OPEN + LOCKED** (shouldn't happen)
 - Reed HIGH, Chain LOW
-- Band: OPEN / LOCKED, flashing
+- Band: OPEN & LOCKED, flashing
 - Screen: Chain is locked but door open!
 - LED off
 
 - Both inputs use the internal pull-up: LOW = switch closed to GND. A disconnected wire reads HIGH (OPEN / UNLOCKED).
-- Any input change restarts that state's loop and resets the band to the door word.
+- Any input change restarts that state's loop and resets the band style.
 - The relay never fires on a state change; only serial `unlock` + Enter sends a 500 ms pulse.
 - Power-up/reset: D5 (GPIO14) stays high-impedance until setup() drives it HIGH, so the relay stays off. Wire the lock on COM + NO (never NC) and use a fail-secure lock.
 
@@ -65,7 +65,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 ## Layout
 
 ```
-cage_lock/                main sketch: door + chain-lock status (band alternates), playlist per state, relay manual only (serial "unlock")
+cage_lock/                main sketch: door + chain-lock status (band shows e.g. CLOSED & LOCKED), playlist per state, relay manual only (serial "unlock")
 docs/wiring.html          wiring page (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse

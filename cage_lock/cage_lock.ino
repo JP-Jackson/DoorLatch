@@ -1,8 +1,8 @@
 // Cage Lock main sketch.
 // Inputs: door reed D7 (LOW = closed), chain lock feedback D6 dry contact (LOW = locked).
 // The lock is a chain around the door, separate from the door itself.
-// Yellow band (rows 0-15): door word and lock word alternate every second
-//   (CLOSED <-> LOCKED, OPEN <-> UNLOCKED, ...).
+// Yellow band (rows 0-15): combined state, e.g. "CLOSED & LOCKED", in the
+//   built-in font stretched 1x wide / 2x tall so the longest one fits.
 //   Door closed: static; normal for one full blue-area cycle, inverted for the next.
 //   Door open:   flashing normal <-> inverted.
 // Blue area (rows 16-63): playlist per state, restarting whenever either input changes.
@@ -64,7 +64,6 @@ const uint16_t GAP_MS = 300;         // blank between screens
 // Open message (two lines, FreeSans Bold 12pt, max ~128 px each)
 const char OPEN_L1[] = "Close the";
 const char OPEN_L2[] = "Cage";
-const uint16_t BAND_SWAP_MS = 1000;  // band alternates door word / lock word
 const uint16_t WORD_MS = 700;        // "CLOSE" / "THE" / "CAGE" each
 const uint16_t LAST_WORD_MS = 1200;  // "CAGE" holds a bit longer
 const uint16_t NOTLOCKED_MS = 3400;  // "Closed but" / "NOT" / "LOCKED!" total
@@ -103,33 +102,25 @@ uint32_t bTimer = 0;
 
 bool isOpen() { return reedStable == HIGH; }
 bool isLocked() { return lockStable == LOCKED_LEVEL; }
-bool bandShowsLock = false;          // band alternates door word / lock word
-uint32_t bandTimer = 0;
 const char *titleText() {
-  if (bandShowsLock) return isLocked() ? "LOCKED" : "UNLOCKED";
-  return isOpen() ? "OPEN" : "CLOSED";
+  if (isOpen()) return isLocked() ? "OPEN & LOCKED" : "OPEN & UNLOCKED";
+  return isLocked() ? "CLOSED & LOCKED" : "CLOSED & UNLOCKED";
 }
 const char *stateText() {
   if (isOpen()) return isLocked() ? "OPEN - LOCKED" : "OPEN - UNLOCKED";
   return isLocked() ? "CLOSED - LOCKED" : "CLOSED - UNLOCKED";
 }
 
-// Size-2 text; spaces are a narrow 8 px.
-int16_t titleWidth(const char *s) {
-  int16_t w = 0;
-  for (; *s; s++) w += (*s == ' ') ? 8 : 12;
-  return w - 2;  // drop trailing gap
-}
+// Built-in font at 1x wide, 2x tall: 6 px per char, 14 px tall glyphs.
+// "CLOSED & UNLOCKED" (the longest) is 101 px.
+int16_t titleWidth(const char *s) { return strlen(s) * 6 - 1; }
 
 void printTitle(const char *s, int16_t x, uint16_t color) {
-  display.setTextSize(2);
+  display.setTextSize(1, 2);
   display.setTextColor(color);
-  for (; *s; s++) {
-    if (*s == ' ') { x += 8; continue; }
-    display.setCursor(x, 0);
-    display.print(*s);
-    x += 12;
-  }
+  display.setCursor(x, 1);
+  display.print(s);
+  display.setTextSize(1);
 }
 
 // ---------- yellow band ----------
@@ -137,15 +128,10 @@ void printTitle(const char *s, int16_t x, uint16_t color) {
 void resetTitle() {
   flashInv = false;
   closedInv = false;
-  bandShowsLock = false;
-  tTimer = bandTimer = millis();
+  tTimer = millis();
 }
 
 void drawTitle() {
-  if (millis() - bandTimer >= BAND_SWAP_MS) {
-    bandTimer = millis();
-    bandShowsLock = !bandShowsLock;
-  }
   const char *t = titleText();
   int16_t w = titleWidth(t);
   bool inv = isOpen() ? flashInv : closedInv;
