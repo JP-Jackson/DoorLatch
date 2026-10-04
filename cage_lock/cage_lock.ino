@@ -2,7 +2,7 @@
 // Inputs: door reed D7 (LOW = closed), chain lock feedback D6 dry contact (LOW = locked).
 // The lock is a chain around the door, separate from the door itself.
 // Yellow band (rows 0-15): combined state, e.g. "CLOSED & LOCKED", in the
-//   built-in font stretched 1x wide / 2x tall so the longest one fits.
+//   built-in font 1x wide / 2x tall, faux bold, so the longest one fits.
 //   Door closed: static; normal for one full blue-area cycle, inverted for the next.
 //   Door open:   flashing normal <-> inverted.
 // Blue area (rows 16-63): playlist per state, restarting whenever either input changes.
@@ -133,15 +133,26 @@ const char *stateText() {
   return isLocked() ? "CLOSED - LOCKED" : "CLOSED - UNLOCKED";
 }
 
-// Built-in font at 1x wide, 2x tall: 6 px per char, 14 px tall glyphs.
-// "CLOSED & UNLOCKED" (the longest) is 101 px.
-int16_t titleWidth(const char *s) { return strlen(s) * 6 - 1; }
+// Built-in font at 1x wide, 2x tall, drawn twice 1 px apart (faux bold) so
+// strokes are 2 px wide. 7 px per letter, 3 px per space.
+// "CLOSED & UNLOCKED" (the longest) is 110 px.
+int16_t titleWidth(const char *s) {
+  int16_t w = 0;
+  for (; *s; s++) w += (*s == ' ') ? 3 : 7;
+  return w - 1;
+}
 
 void printTitle(const char *s, int16_t x, uint16_t color) {
   display.setTextSize(1, 2);
   display.setTextColor(color);
-  display.setCursor(x, 1);
-  display.print(s);
+  for (; *s; s++) {
+    if (*s == ' ') { x += 3; continue; }
+    display.setCursor(x, 1);
+    display.print(*s);
+    display.setCursor(x + 1, 1);
+    display.print(*s);
+    x += 7;
+  }
   display.setTextSize(1);
 }
 
