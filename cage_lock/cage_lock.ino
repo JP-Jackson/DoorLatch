@@ -284,11 +284,11 @@ void drawUnlockAnim(uint32_t t) {
 
 // Two lines of 12pt text; baselines fit cap height + descenders in rows 16-63.
 void drawMessage(const GFXfont *font, const char *l1, const char *l2,
-                 int16_t xoff, uint16_t color) {
+                 int16_t xoff, uint16_t color, int16_t base1 = 33) {
   display.setFont(font);
   display.setTextSize(1);
   display.setTextColor(color);
-  printCentered(l1, 33, xoff);
+  printCentered(l1, base1, xoff);
   printCentered(l2, 57, xoff);
   display.setFont(NULL);
 }
@@ -398,7 +398,7 @@ void drawMsgScene(uint32_t t) {
   t -= OR_MS;
   int16_t x = (t >= SLIDE_MS) ? 0 : 128 - (int16_t)(128 * t / SLIDE_MS);
   display.fillRect(x, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-  drawMessage(&FreeSansBold12pt7b, "Call Your", "Manager", x, SSD1306_BLACK);
+  drawMessage(&FreeSansBold12pt7b, "Call Your", "Manager", x, SSD1306_BLACK, 35);  // closer to "Manager"
 }
 
 void drawCompany() {
