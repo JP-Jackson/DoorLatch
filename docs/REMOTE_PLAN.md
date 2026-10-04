@@ -110,3 +110,38 @@ on 15-minute-old data.
   Pi itself not exposed (only the tunnel).
 - Keep a physical key. If the Pi, tunnel or shop internet is down, remote unlock is down;
   the lock and its local page keep working.
+
+## After-hours access: keypad + code per night (agreed 2026-10-04, hardware on order)
+
+Techs need into the cage (inside the shop) after hours without anyone awake to unlock remotely.
+
+**Hardware:** 4x4 (or 3x4) matrix keypad -> PCF8574 I2C expander module -> ESP I2C bus (D1 SCL /
+D2 SDA, shared with the OLED). PCF8574 at 0x20 (OLED is 0x3C). 3.3V power. Library likely
+`I2CKeyPad` (Rob Tillaart) or `Keypad_I2C`. No free GPIO needed.
+
+**Code format:** `TT` + `CCCCCC` + `#`  (8 digits), e.g. `07482913#`
+- `TT` = tech number (00-99), mapped to a name in a small table (secrets.h or synced later).
+- `CCCCCC` = first 6 digits of HMAC-SHA256(CODE_SECRET, "TT|YYYY-MM-DD") as a number mod 1e6,
+  where the date is the **evening the shift starts** (local time, TZ_INFO).
+- Valid window: 17:00 that date -> 07:00 next day (constants in firmware, tune later).
+- The lock recomputes the expected code for "tonight" (and "last night" before 07:00) and
+  compares. No internet needed; needs a valid clock (NTP synced at least once since boot).
+
+**Lock behavior:**
+- Shows typed digits as `*`, `*` key clears, `#` submits.
+- Valid -> same unlock sequence as remote ("Unlocking the Cage for Mike"), logged
+  `unlock_request src=keypad;for=Mike;tech=07`, then `relay_pulse`.
+- Invalid -> "Invalid code" + buzzer, logged `unlock_denied keypad;tech=TT`. 5 wrong in a row
+  -> keypad locked 5 minutes (logged). Clock not synced -> "Clock not set" and refuse.
+
+**Issuing codes:**
+- Base44 "Night code" button (admin/manager): picks tech + date, computes the code with the
+  same secret (`CAGE_CODE_SECRET` on the Secrets page), texts/emails it, records a CageCommand-like
+  `CageCode` row (tech, date, issued_by) for the audit trail.
+- Until then: a small script (Python/PowerShell) in `tools/` that prints tonight's code.
+
+**Limits / decisions:**
+- Codes can't be revoked early offline. Mitigation: short window; optional revoke list pushed
+  via the Pi later.
+- Anyone with CODE_SECRET can mint codes: keep it only in secrets.h and Base44 Secrets.
+- Remote unlock via Base44 + tunnel stays as the backup for unplanned access.

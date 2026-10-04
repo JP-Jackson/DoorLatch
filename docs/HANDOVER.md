@@ -61,8 +61,14 @@ core. PubSubClient only for the parked `tests/mqtt_test`. QRCode no longer used.
    EventLog mirroring (contracts in REMOTE_PLAN.md). Paste Base44's answers back to Claude.
 5. Wire the 12V lock: relay **COM + NO only (never NC)**, 1N4007 across the lock, confirm the
    lock is fail-secure. Test unlock end-to-end.
+6. **After-hours keypad** (JP buying): 4x4 matrix keypad + PCF8574 I2C expander on D1/D2.
+   Claude adds keypad entry + per-night codes (design in REMOTE_PLAN.md, "After-hours access"),
+   a code-generator script, and the Base44 "Night code" prompt.
 
 ## Open items / decisions
+
+- Keypad hardware on order (4x4 membrane or 3x4 metal keypad + PCF8574 module). Tech number ->
+  name table and the night window (17:00-07:00 assumed) to confirm.
 
 - **Human hostname (`cage.<domain>`) should be status-only** so every remote unlock goes through
   Base44's audit trail. Options: don't share the lock API key with people, or add a
