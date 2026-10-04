@@ -2,7 +2,7 @@
 // Inputs: door reed D7 (LOW = closed), chain lock feedback D6 dry contact (LOW = locked).
 // The lock is a chain around the door, separate from the door itself.
 // Yellow band (rows 0-15): combined state, e.g. "CLOSED & LOCKED", centered,
-//   alternating every 2 s with "WiFi Signal = N". Drawn in the
+//   alternating every 2 s with "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD". Drawn in the
 //   built-in font 1x wide / 2x tall, faux bold, so the longest one fits.
 //   Door closed: static; normal for one full blue-area cycle, inverted for the next.
 //   Door open:   flashing normal <-> inverted.
@@ -18,7 +18,7 @@
 // On-board LED mirrors the reed: on = closed.
 // WiFi: joins the network in secrets.h in the background (display and inputs keep
 //   running if it's down). The band alternates the state text with
-//   "WiFi Signal = N" (0-4 bars) or "NO WIFI". mDNS name: cagelock.local
+//   "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD" or "NO WIFI". mDNS name: cagelock.local
 // Web page: http://cagelock.local/ shows live status, a name box and an Unlock
 //   button. The API key is typed into the page once and kept in that browser.
 // Web API (port 80):
@@ -187,7 +187,10 @@ void drawTitle() {
   if ((millis() / BAND_TOGGLE_MS) % 2) {
     int8_t bars = wifiBars();
     if (bars < 0) strcpy(wifiText, "NO WIFI");
-    else snprintf(wifiText, sizeof(wifiText), "WiFi Signal = %d", bars);
+    else {
+      static const char *Q[] = {"BAD", "WEAK", "FAIR", "GOOD", "GREAT"};
+      snprintf(wifiText, sizeof(wifiText), "WiFi Signal: %s", Q[bars]);
+    }
     t = wifiText;
   }
   int16_t w = titleWidth(t);

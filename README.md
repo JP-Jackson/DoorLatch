@@ -58,7 +58,7 @@ Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) wit
 - `http://cagelock.local/` -> simple page: live status, name box, Unlock button (API key entered once, saved in that browser).
 - `PUT http://cagelock.local/unlock?name=JP` with header `X-Api-Key: <API_KEY>` -> unlock sequence: "Unlocking the Cage" / "for" / name scrolls (24pt bold, any length) / "in" / 3 / 2 / 1 -> relay pulse -> "UNLOCKED". Name optional (max 32 chars; long names scroll faster, 5 s max). 202 accepted (`fires_in_ms`), 401 bad key, 409 busy.
 - Serial: `unlock` or `unlock JP` runs the same sequence.
-- CORS open for a browser web app. Band alternates the state with "WiFi Signal = N" (0-4) or "NO WIFI" every 2 s.
+- CORS open for a browser web app. Band alternates the state with "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD" or "NO WIFI" every 2 s.
 
 PowerShell test:
 ```powershell
