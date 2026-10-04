@@ -34,8 +34,8 @@
 //                   at the end of the countdown), 401 bad/missing key, 409 busy.
 //   CORS is open so a browser web app can call it.
 // Unlock sequence (blue area, black bold text on a lit background):
-//   "Unlocking / the Cage" -> "for" -> NAME scrolls across (24pt, any length)
-//   -> "in" -> 3 -> 2 -> 1 (24pt) -> relay pulse -> "UNLOCKED" (12pt, biggest that fits).
+//   "Unlocking" -> "the" -> "Cage" -> "for" (one big word each, 0.45 s) -> NAME
+//   scrolls across (24pt, any length) -> "in" -> 3 -> 2 -> 1 (0.6 s each) -> relay pulse -> "UNLOCKED" (12pt, biggest that fits).
 //   Band (inverted, bigger bold text): "Unlocking remotely" / "Please standby"
 //   alternating until the relay fires, then "UNLOCKED". Without a name it skips "for" + NAME. Input changes during the
 //   sequence don't interrupt it; the state playlist resumes afterwards.
@@ -60,6 +60,7 @@
 #include "logo.h"
 #include "band_text.h"
 #include "company_text.h"
+#include "seq_text.h"
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -469,20 +470,20 @@ void applyFade(uint8_t level) {
 void startPlaylist();
 bool pulseRelay();
 
-const uint16_t SEQ_INTRO_MS = 1500, SEQ_WORD_MS = 600;
+const uint16_t SEQ_WORD_MS = 450;     // "Unlocking" / "the" / "Cage" / "for" / "in" each
 const uint16_t NAME_PX_PER_S = 120;   // same speed as "Get A-1"...
 const uint16_t NAME_MAX_MS = 5000;    // ...but long names speed up to finish in 5 s
 const int16_t NAME_BASE = 52;         // 24pt baseline; leaves room for g/y/p tails
 int16_t seqNameW = 0, seqNameX1 = 0;
 uint16_t seqNameMs = 0;
-const uint16_t SEQ_COUNT_MS = 1000, SEQ_DONE_MS = 2000;
+const uint16_t SEQ_COUNT_MS = 600, SEQ_DONE_MS = 2000;
 bool seqActive = false, seqFired = false;
 uint32_t seqStart = 0;
 char seqName[33] = "";               // up to 32 chars
 
 uint32_t seqFireAt() {
-  uint32_t t = SEQ_INTRO_MS;
-  if (seqName[0]) t += SEQ_WORD_MS + seqNameMs;
+  uint32_t t = 3 * SEQ_WORD_MS;                  // "Unlocking", "the", "Cage"
+  if (seqName[0]) t += SEQ_WORD_MS + seqNameMs;  // "for" + name
   return t + SEQ_WORD_MS + 3 * SEQ_COUNT_MS;  // "in" + 3, 2, 1
 }
 
@@ -516,15 +517,36 @@ bool startUnlockSeq(const char *name) {
   return true;
 }
 
+// One word in 24pt bold, black on a lit area, centered on its full glyph box
+// (so descenders like the g in "Cage" stay on screen).
+void drawBigWord(const char *w) {
+  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
+  display.setFont(&FreeSansBold24pt7b);
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_BLACK);
+  int16_t x1, y1;
+  uint16_t bw, bh;
+  display.getTextBounds(w, 0, 0, &x1, &y1, &bw, &bh);
+  display.setCursor((128 - (int16_t)bw) / 2 - x1, BLUE_Y + (BLUE_H - (int16_t)bh) / 2 - y1);
+  display.print(w);
+  display.setFont(NULL);
+}
+
 void drawSeq(uint32_t t) {
-  if (t < SEQ_INTRO_MS) {
+  if (t < SEQ_WORD_MS) {
+    // "Unlocking" is 223 px in 24pt; pre-rendered condensed so it can stay big.
     display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-    drawMessage(&FreeSansBold12pt7b, "Unlocking", "the Cage", 0, SSD1306_BLACK);
+    display.drawBitmap((128 - UNLOCKING_BMP_W) / 2, BLUE_Y + (BLUE_H - UNLOCKING_BMP_H) / 2,
+                       UNLOCKING_BMP, UNLOCKING_BMP_W, UNLOCKING_BMP_H, SSD1306_BLACK);
     return;
   }
-  t -= SEQ_INTRO_MS;
+  t -= SEQ_WORD_MS;
+  if (t < SEQ_WORD_MS) { drawBigWord("the"); return; }
+  t -= SEQ_WORD_MS;
+  if (t < SEQ_WORD_MS) { drawBigWord("Cage"); return; }
+  t -= SEQ_WORD_MS;
   if (seqName[0]) {
-    if (t < SEQ_WORD_MS) { drawWord("for", &FreeSansBold24pt7b, 0, 34); return; }
+    if (t < SEQ_WORD_MS) { drawBigWord("for"); return; }
     t -= SEQ_WORD_MS;
     if (t < seqNameMs) {
       // Scroll right to left: starts just off the right edge, ends just off the left.
@@ -540,11 +562,11 @@ void drawSeq(uint32_t t) {
     }
     t -= seqNameMs;
   }
-  if (t < SEQ_WORD_MS) { drawWord("in", &FreeSansBold24pt7b, 0, 34); return; }
+  if (t < SEQ_WORD_MS) { drawBigWord("in"); return; }
   t -= SEQ_WORD_MS;
   if (t < 3 * SEQ_COUNT_MS) {
     static const char *N[] = {"3", "2", "1"};
-    drawWord(N[t / SEQ_COUNT_MS], &FreeSansBold24pt7b, 0, 34);
+    drawBigWord(N[t / SEQ_COUNT_MS]);
     return;
   }
   // 137 px in 12pt bold; 2 px tighter letters bring it to 123 px.
