@@ -24,14 +24,23 @@
 //   on the hotspot it retries saved WiFi every 5 min. Serial "wifireset" forgets
 //   the saved network and reboots (back to secrets.h). Signal strength is a screen
 //   in the CLOSED + LOCKED loop. mDNS name: cagelock.local
-// Web page: http://cagelock.local/ shows live status, a name box and an Unlock
-//   button. The API key is typed into the page once and kept in that browser.
+// Web page: http://cagelock.local/ shows live status and WiFi rating, a name box and
+//   Unlock button, Configure WiFi (starts the setup hotspot) and the event log. The
+//   API key is typed into the page once and kept in that browser.
+// Log: CSV in flash (LittleFS) /log.csv, 64 KB then rotated to /log.old.csv.
+//   Columns: epoch,local_time,uptime_s,event,detail. Time comes from NTP once WiFi
+//   is up (TZ_INFO, US Central); before that epoch is 0 and local_time blank.
+//   Events: boot, door, chain, unlock_request, unlock_denied, relay_pulse,
+//   wifi_connected, wifi_lost, setup_hotspot, wifi_setup_request, time_sync.
 // Web API (port 80):
 //   GET /status  -> {"door":"closed","chain":"locked","state":"CLOSED & LOCKED",
 //                    "rssi":-61,"relay":false}
 //   PUT /unlock?name=JP -> runs the unlock sequence (name optional, max 32 chars).
 //                   Needs header "X-Api-Key: <API_KEY>". 202 accepted (relay fires
 //                   at the end of the countdown), 401 bad/missing key, 409 busy.
+//   PUT /wifisetup -> (key) switch to the CageLock setup hotspot. 202.
+//   GET /log[?since=EPOCH] -> (key, header or ?key=) the log as CSV; with since,
+//                   only synced entries at/after that time.
 //   CORS is open so a browser web app can call it.
 // Unlock sequence (blue area, black bold text on a lit background):
 //   "Unlocking" -> "the" -> "Cage" -> "for" (one big word each, 0.45 s) -> NAME
@@ -57,6 +66,8 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <WiFiManager.h>
+#include <LittleFS.h>
+#include <time.h>
 extern "C" {
 #include <user_interface.h>  // wifi_station_disconnect()
 }
@@ -82,6 +93,63 @@ const uint32_t PORTAL_RETRY_MS = 300000;      // idle hotspot steps aside to ret
 WiFiManager wm;
 bool serverUp = false, everConnected = false;
 uint32_t wifiDownSince = 0, portalSince = 0;
+uint32_t portalRequestAt = 0;                 // web "Configure WiFi": start hotspot at this time
+
+// ---------- event log ----------
+
+const char TZ_INFO[] = "CST6CDT,M3.2.0,M11.1.0";  // US Central with DST
+const char LOG_PATH[] = "/log.csv", LOG_OLD[] = "/log.old.csv";
+const char LOG_HEADER[] = "epoch,local_time,uptime_s,event,detail\n";
+const size_t LOG_MAX = 64 * 1024;
+bool fsOk = false, timeLogged = false;
+
+bool timeValid() { return time(nullptr) > 1700000000; }  // NTP has synced
+
+// One CSV line to flash (and serial). Commas/quotes/newlines in detail become spaces.
+void logEvent(const char *event, const char *detail = "") {
+  char clean[80];
+  uint8_t n = 0;
+  for (; *detail && n < sizeof(clean) - 1; detail++)
+    clean[n++] = (*detail == ',' || *detail == '"' || *detail == '\n' || *detail == '\r') ? ' ' : *detail;
+  clean[n] = 0;
+  char ts[20] = "";
+  time_t now = time(nullptr);
+  bool ok = timeValid();
+  if (ok) {
+    struct tm t;
+    localtime_r(&now, &t);
+    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &t);
+  }
+  char line[160];
+  snprintf(line, sizeof(line), "%ld,%s,%lu,%s,%s\n", ok ? (long)now : 0L, ts,
+           (unsigned long)(millis() / 1000), event, clean);
+  Serial.print(F("LOG "));
+  Serial.print(line);
+  if (!fsOk) return;
+  if (LittleFS.exists(LOG_PATH)) {
+    File c = LittleFS.open(LOG_PATH, "r");
+    size_t sz = c.size();
+    c.close();
+    if (sz > LOG_MAX) {  // rotate: keep one old file
+      LittleFS.remove(LOG_OLD);
+      LittleFS.rename(LOG_PATH, LOG_OLD);
+    }
+  }
+  bool fresh = !LittleFS.exists(LOG_PATH);
+  File f = LittleFS.open(LOG_PATH, "a");
+  if (!f) return;
+  if (fresh) f.print(LOG_HEADER);
+  f.print(line);
+  f.close();
+}
+
+// "GREAT" ... "BAD", or "OFFLINE".
+int8_t wifiBars();
+const char *wifiQuality() {
+  static const char *Q[] = {"BAD", "WEAK", "FAIR", "GOOD", "GREAT"};
+  int8_t b = wifiBars();
+  return b < 0 ? "OFFLINE" : Q[b];
+}
 ESP8266WebServer server(80);
 bool mdnsStarted = false;
 bool wifiWasUp = false;
@@ -547,9 +615,12 @@ void setSeqName(const char *n) {
   seqName[len] = 0;
 }
 
-bool startUnlockSeq(const char *name) {
+bool startUnlockSeq(const char *name, const char *src) {
   if (seqActive || relayActive) return false;
   setSeqName(name);
+  char d[48];
+  snprintf(d, sizeof(d), "%s %s", src, seqName[0] ? seqName : "(no name)");
+  logEvent("unlock_request", d);
   // Measure the name so it scrolls fully on and off, at a fixed speed.
   int16_t y1;
   uint16_t w, h;
@@ -743,7 +814,7 @@ bool pulseRelay() {
   digitalWrite(RELAY_PIN, RELAY_ON);
   relayActive = true;
   relayOnAt = millis();
-  Serial.println(F("Relay pulse"));
+  logEvent("relay_pulse");
   return true;
 }
 
@@ -771,8 +842,8 @@ void serviceSerial() {
         delay(200);
         ESP.restart();
       }
-      if (len && strcmp(buf, "unlock") == 0) startUnlockSeq("");
-      else if (len && strncmp(buf, "unlock ", 7) == 0) startUnlockSeq(buf + 7);
+      if (len && strcmp(buf, "unlock") == 0) startUnlockSeq("", "serial");
+      else if (len && strncmp(buf, "unlock ", 7) == 0) startUnlockSeq(buf + 7, "serial");
       len = 0;
     } else if (len < sizeof(buf) - 1) {
       buf[len++] = c;
@@ -792,25 +863,48 @@ void sendCors() {
 
 const char PAGE[] PROGMEM = R"HTML(<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Cage Lock</title>
-<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;max-width:420px;margin:0 auto;padding:16px}
-h1{font-size:1.4rem}#st{font-size:1.6rem;font-weight:700;padding:14px;border-radius:10px;background:#222;text-align:center}
+<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;max-width:480px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem}h2{font-size:1.1rem;margin:22px 0 6px}#st{font-size:1.6rem;font-weight:700;padding:14px;border-radius:10px;background:#222;text-align:center}
 .bad{color:#ffb000}input,button{width:100%;box-sizing:border-box;font-size:1.1rem;padding:12px;margin:6px 0;border-radius:8px;border:1px solid #444;background:#1b1b1b;color:#eee}
-button{background:#1f6b4a;border:0;font-weight:700}button:disabled{opacity:.5}#msg{min-height:1.4em;color:#aaa}small{color:#888}</style></head>
+button{background:#1f6b4a;border:0;font-weight:700}button.alt{background:#333}button:disabled{opacity:.5}
+#msg,#wmsg{min-height:1.4em;color:#aaa}small{color:#888}a{color:#7fc4ff}
+table{width:100%;border-collapse:collapse;font-size:.85rem}td{padding:4px 6px;border-bottom:1px solid #333;vertical-align:top}
+.tw{overflow-x:auto}</style></head>
 <body><h1>Cage Lock</h1><div id="st">...</div><p><small id="sig"></small></p>
 <input id="name" placeholder="Name (optional)" maxlength="32">
 <button id="go">Unlock</button><div id="msg"></div>
 <details><summary><small>API key</small></summary><input id="key" placeholder="API key"></details>
+<h2>WiFi</h2>
+<button id="wifi" class="alt">Configure WiFi</button><div id="wmsg"></div>
+<h2>Log</h2>
+<button id="showlog" class="alt">Show recent events</button>
+<p><small><a id="dl" href="#">Download full log (CSV)</a></small></p>
+<div class="tw"><table id="log"></table></div>
 <script>
 const $=id=>document.getElementById(id);$('key').value=localStorage.k||'';
-$('key').onchange=()=>localStorage.k=$('key').value;
+const esc=t=>t.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const key=()=>{localStorage.k=$('key').value;return $('key').value};
+$('key').onchange=key;
 async function poll(){try{const s=await(await fetch('/status')).json();
 $('st').textContent=s.state;$('st').className=s.state=='CLOSED & LOCKED'?'':'bad';
-$('sig').textContent='WiFi '+s.rssi+' dBm'+(s.relay?' - relay ON':'');}catch(e){$('st').textContent='offline';}}
-$('go').onclick=async()=>{$('go').disabled=true;localStorage.k=$('key').value;
-try{const r=await fetch('/unlock?name='+encodeURIComponent($('name').value),{method:'PUT',headers:{'X-Api-Key':$('key').value}});
+const t=s.time?new Date(s.time*1000).toLocaleString():'clock not synced';
+$('sig').textContent='WiFi '+s.wifi+' ('+s.rssi+' dBm) - '+t+(s.relay?' - relay ON':'');}catch(e){$('st').textContent='offline';}}
+$('go').onclick=async()=>{$('go').disabled=true;
+try{const r=await fetch('/unlock?name='+encodeURIComponent($('name').value),{method:'PUT',headers:{'X-Api-Key':key()}});
 const j=await r.json();$('msg').textContent=r.status==202?'Unlocking in '+(j.fires_in_ms/1000).toFixed(1)+' s':
 r.status==401?'Wrong API key':'Busy, try again';}catch(e){$('msg').textContent='Error';}
 setTimeout(()=>$('go').disabled=false,3000);};
+$('wifi').onclick=async()=>{
+if(!confirm('The lock will leave this network and start the "CageLock" setup hotspot. Join it, then open http://192.168.4.1 to pick a network. Continue?'))return;
+try{const r=await fetch('/wifisetup',{method:'PUT',headers:{'X-Api-Key':key()}});
+$('wmsg').textContent=r.status==202?'Hotspot starting: join "CageLock", then open http://192.168.4.1':r.status==401?'Wrong API key':'Error';}
+catch(e){$('wmsg').textContent='Error';}};
+$('dl').onclick=e=>{e.preventDefault();location.href='/log?key='+encodeURIComponent(key());};
+$('showlog').onclick=async()=>{const r=await fetch('/log',{headers:{'X-Api-Key':key()}});
+if(r.status!=200){$('log').innerHTML='<tr><td>'+(r.status==401?'Wrong API key':'Error')+'</td></tr>';return;}
+const rows=(await r.text()).trim().split('\n').slice(1).slice(-40).reverse();
+$('log').innerHTML=rows.map(l=>{const c=l.split(',');const when=c[1]||('boot+'+c[2]+'s');
+return '<tr><td>'+esc(when)+'</td><td>'+esc(c[3]||'')+'</td><td>'+esc(c[4]||'')+'</td></tr>'}).join('');};
 poll();setInterval(poll,2000);
 </script></body></html>)HTML";
 
@@ -827,6 +921,10 @@ void handleStatus() {
   j += titleText();
   j += "\",\"rssi\":";
   j += WiFi.RSSI();
+  j += ",\"wifi\":\"";
+  j += wifiQuality();
+  j += "\",\"time\":";
+  j += timeValid() ? (long)time(nullptr) : 0L;
   j += ",\"relay\":";
   j += relayActive ? "true" : "false";
   j += "}";
@@ -834,14 +932,55 @@ void handleStatus() {
   server.send(200, "application/json", j);
 }
 
+// Key from the X-Api-Key header, or ?key= (for plain download links). Logs denials.
+bool keyOk(const char *what) {
+  if (server.header("X-Api-Key") == API_KEY || server.arg("key") == API_KEY) return true;
+  logEvent("unlock_denied", (String(what) + " from " + server.client().remoteIP().toString()).c_str());
+  server.send(401, "application/json", "{\"ok\":false,\"error\":\"bad key\"}");
+  return false;
+}
+
+void handleWifiSetup() {
+  sendCors();
+  if (!keyOk("wifisetup")) return;
+  logEvent("wifi_setup_request", server.client().remoteIP().toString().c_str());
+  server.send(202, "application/json", "{\"ok\":true,\"join\":\"CageLock\",\"open\":\"http://192.168.4.1\"}");
+  portalRequestAt = millis() + 500;  // let this response go out first
+}
+
+// Streams one log file; with since>0 only lines whose epoch >= since.
+void sendLogFile(const char *path, long since, bool skipHeader) {
+  File f = LittleFS.open(path, "r");
+  if (!f) return;
+  bool first = true;
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    if (first) { first = false; if (line.startsWith("epoch")) { if (!skipHeader) server.sendContent(line + "\n"); continue; } }
+    if (since > 0 && line.toInt() < since) continue;
+    server.sendContent(line + "\n");
+    yield();
+  }
+  f.close();
+}
+
+void handleLog() {
+  sendCors();
+  if (!keyOk("log")) return;
+  long since = server.arg("since").toInt();
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/csv", "");
+  server.sendContent(LOG_HEADER);
+  if (fsOk) {
+    sendLogFile(LOG_OLD, since, true);
+    sendLogFile(LOG_PATH, since, true);
+  }
+  server.sendContent("");
+}
+
 void handleUnlock() {
   sendCors();
-  if (server.header("X-Api-Key") != API_KEY) {
-    server.send(401, "application/json", "{\"ok\":false,\"error\":\"bad key\"}");
-    return;
-  }
-  Serial.println(F("Web unlock request"));
-  if (startUnlockSeq(server.arg("name").c_str())) {
+  if (!keyOk("unlock")) return;
+  if (startUnlockSeq(server.arg("name").c_str(), "web")) {
     String j = "{\"ok\":true,\"fires_in_ms\":";
     j += (long)seqFireAt();
     j += "}";
@@ -877,6 +1016,10 @@ void setupWeb() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/unlock", HTTP_PUT, handleUnlock);
+  server.on("/wifisetup", HTTP_PUT, handleWifiSetup);
+  server.on("/wifisetup", HTTP_OPTIONS, handlePreflight);
+  server.on("/log", HTTP_GET, handleLog);
+  server.on("/log", HTTP_OPTIONS, handlePreflight);
   server.on("/status", HTTP_OPTIONS, handlePreflight);
   server.on("/unlock", HTTP_OPTIONS, handlePreflight);
   server.onNotFound([]() { sendCors(); server.send(404, "text/plain", "not found"); });
@@ -889,8 +1032,7 @@ void startPortal() {
   // which knocks phones off the hotspot. (SDK call; keeps the saved config.)
   WiFi.setAutoReconnect(false);
   wifi_station_disconnect();
-  Serial.print(F("No WiFi - starting setup hotspot "));
-  Serial.println(AP_NAME);
+  logEvent("setup_hotspot", AP_NAME);
   wm.startConfigPortal(AP_NAME, AP_PASS);
   portalSince = millis();
 }
@@ -898,10 +1040,7 @@ void startPortal() {
 void serviceWeb() {
   bool up = WiFi.status() == WL_CONNECTED;
   if (up && !wifiWasUp) {
-    Serial.print(F("WiFi connected to "));
-    Serial.print(WiFi.SSID());
-    Serial.print(F(", IP "));
-    Serial.println(WiFi.localIP());
+    logEvent("wifi_connected", (WiFi.SSID() + " " + WiFi.localIP().toString()).c_str());
     if (wm.getConfigPortalActive()) wm.stopConfigPortal();
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
@@ -909,7 +1048,7 @@ void serviceWeb() {
     if (!serverUp) { server.begin(); serverUp = true; }
     everConnected = true;
   } else if (!up && wifiWasUp) {
-    Serial.println(F("WiFi lost"));
+    logEvent("wifi_lost");
     wifiDownSince = millis();
   }
   wifiWasUp = up;
@@ -929,6 +1068,14 @@ void serviceWeb() {
     startPortal();
   }
 
+  if (portalRequestAt && (int32_t)(millis() - portalRequestAt) >= 0) {
+    portalRequestAt = 0;
+    if (!wm.getConfigPortalActive()) startPortal();
+  }
+  if (!timeLogged && timeValid()) {
+    timeLogged = true;
+    logEvent("time_sync");
+  }
   if (mdnsStarted) MDNS.update();
   if (serverUp) server.handleClient();
 }
@@ -954,6 +1101,9 @@ void setup() {
     while (true) delay(1000);
   }
   Serial.println(F("\nCage Lock"));
+  fsOk = LittleFS.begin();
+  configTime(TZ_INFO, "pool.ntp.org", "time.nist.gov");  // syncs once WiFi is up
+  logEvent("boot", ESP.getResetReason().c_str());
   setupWeb();
   display.setTextWrap(false);
   display.clearDisplay();
@@ -980,7 +1130,7 @@ void loop() {
   if (millis() - reedChange >= DEBOUNCE_MS && r != reedStable) {
     reedStable = r;
     digitalWrite(LED_PIN, reedStable);
-    Serial.println(stateText());
+    logEvent("door", isOpen() ? "open" : "closed");
     resetTitle();
     startPlaylist();
   }
@@ -993,7 +1143,7 @@ void loop() {
   }
   if (millis() - lockChange >= DEBOUNCE_MS && l != lockStable) {
     lockStable = l;
-    Serial.println(stateText());
+    logEvent("chain", isLocked() ? "locked" : "unlocked");
     startPlaylist();
   }
 

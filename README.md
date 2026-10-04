@@ -59,6 +59,8 @@ Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) wit
 - `GET http://cagelock.local/status` -> `{"door":"closed","chain":"locked","state":"CLOSED & LOCKED","rssi":-61,"relay":false}`
 - `http://cagelock.local/` -> simple page: live status, name box, Unlock button (API key entered once, saved in that browser).
 - `PUT http://cagelock.local/unlock?name=JP` with header `X-Api-Key: <API_KEY>` -> unlock sequence: Unlocking / the / Cage / for (one word each, fast) / name scrolls (24pt bold, any length) / in / 3 / 2 / 1 (0.6 s each) -> relay pulse -> "UNLOCKED". Name optional (max 32 chars; long names scroll faster, 5 s max). 202 accepted (`fires_in_ms`), 401 bad key, 409 busy.
+- `PUT /wifisetup` (key) -> lock switches to the CageLock setup hotspot (also a "Configure WiFi" button on the page).
+- `GET /log` (key via header or `?key=`) -> event log CSV; `?since=<epoch>` returns only newer synced entries.
 - Serial: `unlock` or `unlock JP` runs the same sequence. Band shows "Unlocking remotely" / "Please standby" until the relay fires, then "UNLOCKED".
 - CORS open for a browser web app. WiFi signal is a screen in the CLOSED & LOCKED loop: "WiFi" / GREAT, GOOD, FAIR, WEAK, BAD; "WiFi" / "Connecting" while offline; "Join WiFi" / "CageLock" while the setup hotspot is up. Second half of the screen shows where to browse: "cagelock.local" / IP, or "Then open" / "192.168.4.1" in setup mode.
 
@@ -66,6 +68,27 @@ PowerShell test:
 ```powershell
 Invoke-RestMethod http://cagelock.local/status
 Invoke-RestMethod -Method Put "http://cagelock.local/unlock?name=JP" -Headers @{ "X-Api-Key" = "<API_KEY>" }
+```
+
+## Event log (cage_lock)
+
+CSV in flash (`/log.csv`, 64 KB, then rotated to `/log.old.csv`; ~1,500-3,000 events kept). Clock from NTP once WiFi is up (US Central, `TZ_INFO`). Before sync, `epoch` is 0 and `local_time` blank; `uptime_s` still orders them.
+
+```
+epoch,local_time,uptime_s,event,detail
+0,,0,boot,Power On
+1759600212,2026-10-04 13:30:12,8,wifi_connected,IOT 192.168.1.57
+1759600213,2026-10-04 13:30:13,9,time_sync,
+1759600930,2026-10-04 13:42:10,726,door,open
+1759600954,2026-10-04 13:42:34,750,door,closed
+1759600960,2026-10-04 13:42:40,756,chain,locked
+1759601402,2026-10-04 13:50:02,1198,unlock_request,web JP Jackson
+1759601407,2026-10-04 13:50:07,1203,relay_pulse,
+1759601415,2026-10-04 13:50:15,1211,chain,unlocked
+1759601800,2026-10-04 13:56:40,1596,unlock_denied,unlock from 192.168.1.88
+1759602000,2026-10-04 14:00:00,1796,wifi_lost,
+1759602060,2026-10-04 14:01:00,1856,setup_hotspot,CageLock
+1759602100,2026-10-04 14:01:40,1896,wifi_setup_request,192.168.1.20
 ```
 
 ## Parts
@@ -97,7 +120,7 @@ secrets.h.example         copy to secrets.h (gitignored) for WiFi creds
 ```sh
 arduino-cli config add board_manager.additional_urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
 arduino-cli core update-index && arduino-cli core install esp8266:esp8266
-arduino-cli lib install "Adafruit SSD1306" "Adafruit GFX Library" "WiFiManager"
+arduino-cli lib install "Adafruit SSD1306" "Adafruit GFX Library" "WiFiManager"   # LittleFS + time are built into the ESP8266 core
 
 FQBN=esp8266:esp8266:nodemcuv2
 arduino-cli compile -b $FQBN tests/relay_test
