@@ -2,9 +2,10 @@
 // Inputs: door reed D7 (LOW = closed), chain lock feedback D6 dry contact (LOW = locked).
 // The lock is a chain around the door, separate from the door itself.
 // Yellow band (rows 0-15): combined state, e.g. "CLOSED & LOCKED", centered,
-//   alternating every 2 s with "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD". Drawn in the
+//   showing "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD" for 2 s every 30 s. Drawn in the
 //   built-in font 1x wide / 2x tall, faux bold, so the longest one fits.
-//   Door closed: static; normal for one full blue-area cycle, inverted for the next.
+//   Door closed: static, swapping normal/inverted every 5 s. CLOSED & LOCKED is
+//   drawn at half brightness (checkerboard).
 //   Door open:   flashing normal <-> inverted.
 // Blue area (rows 16-63): playlist per state, restarting whenever either input changes.
 //   CLOSED + LOCKED:   JP + padlock slides in from the right, locks, padlock rattles
@@ -114,7 +115,6 @@ uint32_t relayOnAt = 0, relayOffAt = 0;
 uint32_t reedChange = 0, lastFrame = 0;
 
 bool flashInv = false;
-bool closedInv = false;              // toggles each closed playlist cycle
 uint32_t tTimer = 0;
 
 // Blue area: play the current playlist; Polk fades, everything else cuts.
@@ -168,11 +168,12 @@ void printTitle(const char *s, int16_t x, uint16_t color) {
 
 void resetTitle() {
   flashInv = false;
-  closedInv = false;
   tTimer = millis();
 }
 
-const uint16_t BAND_TOGGLE_MS = 2000;  // state text <-> WiFi signal text
+const uint32_t WIFI_EVERY_MS = 30000;  // show the WiFi signal text...
+const uint16_t WIFI_SHOW_MS = 2000;    // ...for 2 s out of every 30 s
+const uint16_t CLOSED_INV_MS = 5000;   // closed: swap normal/inverted every 5 s
 
 // 0-4 bars from RSSI, -1 when not connected.
 int8_t wifiBars() {
@@ -184,7 +185,7 @@ int8_t wifiBars() {
 void drawTitle() {
   static char wifiText[20];
   const char *t = titleText();
-  if ((millis() / BAND_TOGGLE_MS) % 2) {
+  if (millis() % WIFI_EVERY_MS < WIFI_SHOW_MS) {
     int8_t bars = wifiBars();
     if (bars < 0) strcpy(wifiText, "NO WIFI");
     else {
@@ -194,10 +195,16 @@ void drawTitle() {
     t = wifiText;
   }
   int16_t w = titleWidth(t);
-  bool inv = isOpen() ? flashInv : closedInv;
+  bool inv = isOpen() ? flashInv : (millis() / CLOSED_INV_MS) % 2;
   display.setFont(NULL);
   display.fillRect(0, 0, 128, BAND_H, inv ? SSD1306_WHITE : SSD1306_BLACK);
   printTitle(t, (128 - w) / 2, inv ? SSD1306_BLACK : SSD1306_WHITE);
+
+  // CLOSED & LOCKED: dim the band by blanking every other pixel (checkerboard).
+  // The panel only has one global brightness, so this is how the yellow alone dims.
+  if (!isOpen() && isLocked())
+    for (int16_t y = 0; y < BAND_H; y++)
+      for (int16_t x = (y & 1); x < 128; x += 2) display.drawPixel(x, y, SSD1306_BLACK);
 
   // Open: flash between normal and inverted. Closed: set per playlist cycle.
   if (isOpen() && millis() - tTimer >= FLASH_MS) {
@@ -566,7 +573,6 @@ void nextItem() {
   uint8_t n;
   const uint8_t *list = curList(n);
   listPos = (listPos + 1) % n;
-  if (listPos == 0 && !isOpen()) closedInv = !closedInv;  // new cycle
   item = list[listPos];
 }
 

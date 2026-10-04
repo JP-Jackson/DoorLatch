@@ -23,13 +23,13 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 
 **1. CLOSED + LOCKED** (normal)
 - Reed LOW, Chain LOW
-- Band: CLOSED & LOCKED, static (normal one loop, inverted the next)
+- Band: CLOSED & LOCKED, half brightness, swaps normal/inverted every 5 s
 - Screen: JP lock -> Need something? -> Get A-1 -> OR -> Call Your Manager -> Polk
 - LED on
 
 **2. CLOSED + UNLOCKED**
 - Reed LOW, Chain HIGH
-- Band: CLOSED & UNLOCKED, static
+- Band: CLOSED & UNLOCKED, swaps normal/inverted every 5 s
 - Screen: CLOSED / BUT / NOT / LOCKED! one huge word at a time
 - LED on
 
@@ -58,7 +58,7 @@ Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) wit
 - `http://cagelock.local/` -> simple page: live status, name box, Unlock button (API key entered once, saved in that browser).
 - `PUT http://cagelock.local/unlock?name=JP` with header `X-Api-Key: <API_KEY>` -> unlock sequence: "Unlocking the Cage" / "for" / name scrolls (24pt bold, any length) / "in" / 3 / 2 / 1 -> relay pulse -> "UNLOCKED". Name optional (max 32 chars; long names scroll faster, 5 s max). 202 accepted (`fires_in_ms`), 401 bad key, 409 busy.
 - Serial: `unlock` or `unlock JP` runs the same sequence.
-- CORS open for a browser web app. Band alternates the state with "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD" or "NO WIFI" every 2 s.
+- CORS open for a browser web app. Band shows "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD" or "NO WIFI" for 2 s every 30 s.
 
 PowerShell test:
 ```powershell
