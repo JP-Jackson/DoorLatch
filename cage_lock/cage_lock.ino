@@ -456,8 +456,17 @@ void buildQr() {
 #else
   const char *want = CONTACT_VCARD;
 #endif
-  for (uint8_t v = 1; v <= 7 && !qrOk; v++)
-    qrOk = qrcode_initText(&qr, qrBuf, v, ECC_LOW, want) == 0;
+  // The library doesn't check capacity: handing it a version that's too small
+  // overflows its stack buffers and crashes. Pick the version up front from the
+  // byte-mode capacity at ECC_LOW (versions 1-7).
+  static const uint8_t CAP[] = {17, 32, 53, 78, 106, 134, 154};
+  size_t len = strlen(want);
+  for (uint8_t v = 1; v <= 7; v++) {
+    if (len <= CAP[v - 1]) {
+      qrOk = qrcode_initText(&qr, qrBuf, v, ECC_LOW, want) == 0;
+      break;
+    }
+  }
   Serial.print(F("QR "));
   Serial.println(qrOk ? "ready" : "text too long (max ~150 chars)");
 }
