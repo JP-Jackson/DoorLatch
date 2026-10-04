@@ -1,0 +1,47 @@
+from PIL import Image, ImageDraw, ImageFont
+import numpy as np, cv2
+PATH='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+F=ImageFont.truetype(PATH,66); SQ=0.62; TH=0.30  # 66 px at 4x -> cap height exactly 48 = 12 px
+cap=F.getbbox('H')
+def render(t):
+  bb=F.getbbox(t)
+  W=bb[2]-bb[0]+8
+  im=Image.new('L',(W,64),0)
+  # cap top exactly at 4x row 8 (= row 2), so caps fill rows 2-13 on pixel boundaries
+  ImageDraw.Draw(im).text((4-bb[0],8-cap[1]),t,font=F,fill=255)
+  w=max(1,round(W/4*SQ))
+  im=im.resize((w*4,64),Image.LANCZOS)          # squeeze at 4x first
+  a=np.array(im,dtype=np.float32)/255
+  a=a.reshape(16,4,w,4).mean(axis=(1,3))         # area-average down to 1x
+  a=a>TH
+  xs=np.where(a.any(0))[0]; return a[:,xs[0]:xs[-1]+1]
+S=['CLOSED & LOCKED','CLOSED & UNLOCKED','OPEN & UNLOCKED','OPEN & LOCKED','NO WIFI',
+   'WiFi Signal: GREAT','WiFi Signal: GOOD','WiFi Signal: FAIR','WiFi Signal: WEAK','WiFi Signal: BAD']
+out=['// Band phrases pre-rendered from DejaVu Sans Bold (16 px, squeezed to 65%),',
+     '// 16 rows tall, 1 bit, MSB first. Generated; edit the list in band_gen.py.',
+     '#pragma once','#include <Arduino.h>','']
+names=[]; prev=[]
+for i,t in enumerate(S):
+  a=render(t); h,w=a.shape; bw=(w+7)//8; bs=[]
+  for y in range(16):
+    for k in range(bw):
+      v=0
+      for b in range(8):
+        x=k*8+b
+        if x<w and a[y,x]: v|=0x80>>b
+      bs.append('0x%02X'%v)
+  out.append(f'const uint8_t BAND_{i}[] PROGMEM = {{ // "{t}", {w} px')
+  for y in range(16): out.append('  '+', '.join(bs[y*bw:(y+1)*bw])+',')
+  out.append('};'); names.append((t,w,f'BAND_{i}'))
+  c=np.zeros((16,128),np.uint8); c[:,(128-w)//2:(128-w)//2+w]=a*255; prev.append(c)
+  print(f'{t:22s} {w}px')
+out.append('struct BandText { const char *text; uint8_t w; const uint8_t *bmp; };')
+out.append('const BandText BAND_TEXTS[] = {')
+for t,w,n in names: out.append(f'  {{"{t}", {w}, {n}}},')
+out.append('};')
+open('/home/user/DoorLatch/cage_lock/band_text.h','w').write('\n'.join(out)+'\n')
+img=np.full((len(prev)*20,128),60,np.uint8)
+for i,r in enumerate(prev): img[i*20:i*20+16]=r
+big=cv2.resize(img,None,fx=4,fy=4,interpolation=cv2.INTER_NEAREST)
+rgb=np.zeros(big.shape+(3,),np.uint8); rgb[big==255]=(0,210,255); rgb[big==60]=(60,60,60)
+cv2.imwrite('band_all.png',rgb)

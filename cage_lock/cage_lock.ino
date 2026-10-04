@@ -1,11 +1,10 @@
 // Cage Lock main sketch.
 // Inputs: door reed D7 (LOW = closed), chain lock feedback D6 dry contact (LOW = locked).
 // The lock is a chain around the door, separate from the door itself.
-// Yellow band (rows 0-15): combined state, e.g. "CLOSED & LOCKED", centered,
-//   showing "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD" for 2 s every 30 s. Drawn in the
-//   built-in font 1x wide / 2x tall, faux bold, so the longest one fits.
-//   Door closed: static, swapping normal/inverted every 5 s. CLOSED & LOCKED is
-//   drawn at half brightness (checkerboard).
+// Yellow band (rows 0-15): combined state, e.g. "CLOSED & LOCKED", centered, in
+//   bold bitmaps pre-rendered from DejaVu Sans Bold (band_text.h, band_gen.py.txt),
+//   showing "WiFi Signal: GREAT/GOOD/FAIR/WEAK/BAD" for 2 s every 30 s.
+//   Door closed: static, swapping normal/inverted every 5 s.
 //   Door open:   flashing normal <-> inverted.
 // Blue area (rows 16-63): playlist per state, restarting whenever either input changes.
 //   CLOSED + LOCKED:   JP + padlock slides in from the right, locks, padlock rattles
@@ -51,6 +50,7 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include "logo.h"
+#include "band_text.h"
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -182,6 +182,17 @@ int8_t wifiBars() {
   return rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : rssi > -85 ? 1 : 0;
 }
 
+// Pre-rendered bold bitmap (band_text.h) for a known phrase, centered.
+bool drawBandBitmap(const char *t, uint16_t color) {
+  for (const BandText &b : BAND_TEXTS) {
+    if (strcmp(b.text, t) == 0) {
+      display.drawBitmap((128 - b.w) / 2, 0, b.bmp, b.w, 16, color);
+      return true;
+    }
+  }
+  return false;
+}
+
 void drawTitle() {
   static char wifiText[20];
   const char *t = titleText();
@@ -198,13 +209,8 @@ void drawTitle() {
   bool inv = isOpen() ? flashInv : (millis() / CLOSED_INV_MS) % 2;
   display.setFont(NULL);
   display.fillRect(0, 0, 128, BAND_H, inv ? SSD1306_WHITE : SSD1306_BLACK);
-  printTitle(t, (128 - w) / 2, inv ? SSD1306_BLACK : SSD1306_WHITE);
-
-  // CLOSED & LOCKED: dim the band by blanking every other pixel (checkerboard).
-  // The panel only has one global brightness, so this is how the yellow alone dims.
-  if (!isOpen() && isLocked())
-    for (int16_t y = 0; y < BAND_H; y++)
-      for (int16_t x = (y & 1); x < 128; x += 2) display.drawPixel(x, y, SSD1306_BLACK);
+  uint16_t fg = inv ? SSD1306_BLACK : SSD1306_WHITE;
+  if (!drawBandBitmap(t, fg)) printTitle(t, (128 - w) / 2, fg);
 
   // Open: flash between normal and inverted. Closed: set per playlist cycle.
   if (isOpen() && millis() - tTimer >= FLASH_MS) {

@@ -23,7 +23,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 
 **1. CLOSED + LOCKED** (normal)
 - Reed LOW, Chain LOW
-- Band: CLOSED & LOCKED, half brightness, swaps normal/inverted every 5 s
+- Band: CLOSED & LOCKED, swaps normal/inverted every 5 s
 - Screen: JP lock -> Need something? -> Get A-1 -> OR -> Call Your Manager -> Polk
 - LED on
 
