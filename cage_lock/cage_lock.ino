@@ -1,7 +1,8 @@
 // Cage Lock main sketch.
 // Inputs: door reed D7 (LOW = closed), chain lock feedback D6 dry contact (LOW = locked).
 // The lock is a chain around the door, separate from the door itself.
-// Yellow band (rows 0-15): combined state, e.g. "CLOSED & LOCKED", in the
+// Yellow band (rows 0-15): combined state, e.g. "CLOSED & LOCKED", centered,
+//   alternating every 2 s with "WiFi Signal = N". Drawn in the
 //   built-in font 1x wide / 2x tall, faux bold, so the longest one fits.
 //   Door closed: static; normal for one full blue-area cycle, inverted for the next.
 //   Door open:   flashing normal <-> inverted.
@@ -16,8 +17,8 @@
 //   OPEN + LOCKED:     "Chain is locked but door open!" (shouldn't happen).
 // On-board LED mirrors the reed: on = closed.
 // WiFi: joins the network in secrets.h in the background (display and inputs keep
-//   running if it's down). Band shows signal bars at the right; a blinking X when
-//   not connected. mDNS name: cagelock.local
+//   running if it's down). The band alternates the state text with
+//   "WiFi Signal = N" (0-4 bars) or "NO WIFI". mDNS name: cagelock.local
 // Web page: http://cagelock.local/ shows live status, a name box and an Unlock
 //   button. The API key is typed into the page once and kept in that browser.
 // Web API (port 80):
@@ -171,38 +172,29 @@ void resetTitle() {
   tTimer = millis();
 }
 
-// 4 signal bars (3/6/9/12 px tall) at the right of the band.
-// Not connected: a blinking X instead.
-void drawWifiIcon(uint16_t fg) {
-  const int16_t x = 116, base = 13;
-  if (WiFi.status() != WL_CONNECTED) {
-    if ((millis() / 500) % 2 == 0) {
-      display.drawLine(x + 2, base - 9, x + 9, base - 2, fg);
-      display.drawLine(x + 3, base - 9, x + 10, base - 2, fg);
-      display.drawLine(x + 9, base - 9, x + 2, base - 2, fg);
-      display.drawLine(x + 10, base - 9, x + 3, base - 2, fg);
-    }
-    return;
-  }
+const uint16_t BAND_TOGGLE_MS = 2000;  // state text <-> WiFi signal text
+
+// 0-4 bars from RSSI, -1 when not connected.
+int8_t wifiBars() {
+  if (WiFi.status() != WL_CONNECTED) return -1;
   long rssi = WiFi.RSSI();
-  int8_t bars = rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : rssi > -85 ? 1 : 0;
-  for (int8_t i = 0; i < 4; i++) {
-    int16_t h = 3 * (i + 1), bx = x + i * 3;
-    if (i < bars) display.fillRect(bx, base - h + 1, 2, h, fg);
-    else display.drawPixel(bx, base, fg);  // empty bar: just a dot on the baseline
-  }
+  return rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : rssi > -85 ? 1 : 0;
 }
 
-
 void drawTitle() {
+  static char wifiText[20];
   const char *t = titleText();
+  if ((millis() / BAND_TOGGLE_MS) % 2) {
+    int8_t bars = wifiBars();
+    if (bars < 0) strcpy(wifiText, "NO WIFI");
+    else snprintf(wifiText, sizeof(wifiText), "WiFi Signal = %d", bars);
+    t = wifiText;
+  }
   int16_t w = titleWidth(t);
   bool inv = isOpen() ? flashInv : closedInv;
   display.setFont(NULL);
   display.fillRect(0, 0, 128, BAND_H, inv ? SSD1306_WHITE : SSD1306_BLACK);
-  // Text centered in the space left of the WiFi icon (x 116-127)
-  printTitle(t, (114 - w) / 2, inv ? SSD1306_BLACK : SSD1306_WHITE);
-  drawWifiIcon(inv ? SSD1306_BLACK : SSD1306_WHITE);
+  printTitle(t, (128 - w) / 2, inv ? SSD1306_BLACK : SSD1306_WHITE);
 
   // Open: flash between normal and inverted. Closed: set per playlist cycle.
   if (isOpen() && millis() - tTimer >= FLASH_MS) {
