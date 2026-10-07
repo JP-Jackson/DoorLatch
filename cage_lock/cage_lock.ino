@@ -59,15 +59,11 @@
 // Serial is ignored for the first 3 s after boot so noise can't trigger it.
 // Boot/power loss: D5 (GPIO14) is high-impedance until setup() drives it HIGH,
 // so the relay stays off through reset, brownout and power-up.
-// Libraries: Adafruit SSD1306, Adafruit GFX Library, WiFiManager (tzapu).
+// Display: SSD1309 128x64 I2C OLED via U8g2, dark layout (white on black, outlines
+// instead of filled/inverted areas, which make this panel streak).
+// Libraries: U8g2, WiFiManager (tzapu).
 #include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include <Fonts/FreeSansBold9pt7b.h>
-#include <Fonts/FreeSans12pt7b.h>
-#include <Fonts/FreeSansBold12pt7b.h>
-#include <Fonts/FreeSansBold18pt7b.h>
-#include <Fonts/FreeSansBold24pt7b.h>
+#include <U8g2lib.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
@@ -190,7 +186,7 @@ const uint16_t TEXT_HOLD_MS = 3000;  // company name
 const uint16_t OPEN_MSG_MS = 3000;   // open message
 const uint16_t GAP_MS = 300;         // blank between screens
 
-// Open message (two lines, FreeSans Bold 12pt, max ~128 px each)
+// Open message (two lines, FONT_12, max ~128 px each)
 const char OPEN_L1[] = "Close the";
 const char OPEN_L2[] = "Cage";
 const uint16_t WORD_MS = 700;        // "CLOSE" / "THE" / "CAGE" each
@@ -203,7 +199,15 @@ const int16_t LOGO_Y = BLUE_Y + (BLUE_H - JP_H) / 2;
 
 const uint8_t BAYER[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
 
-Adafruit_SSD1306 display(128, 64, &Wire, -1);
+U8G2_SSD1309_128X64_NONAME0_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
+
+// Fonts (U8g2 equivalents of the old FreeSans Bold 24/18/12/9 pt).
+#define FONT_24 u8g2_font_fub30_tr   // cap 30
+#define FONT_18 u8g2_font_fub25_tr   // cap 25
+#define FONT_12 u8g2_font_fub17_tr   // cap 17
+#define FONT_9  u8g2_font_fub11_tr   // cap 11
+#define FONT_REG u8g2_font_fur17_tr  // regular, cap 17
+#define FONT_SMALL u8g2_font_6x13B_tr  // band fallback, 6 px per char
 
 int doorStable = -1, doorLast = -1;
 int lockStable = -1, lockLast = -1;
@@ -239,30 +243,18 @@ const char *stateText() {
   return isLocked() ? "CLOSED - LOCKED" : "CLOSED - UNLOCKED";
 }
 
-// Built-in font at 1x wide, 2x tall, drawn twice 1 px apart (faux bold) so
-// strokes are 2 px wide. 7 px per letter, 3 px per space.
-// "CLOSED & UNLOCKED" (the longest) is 110 px.
+// Band fallback text (phrases without a pre-rendered bitmap): bold 6x13, centered.
 int16_t titleWidth(const char *s) {
-  int16_t w = 0;
-  for (; *s; s++) w += (*s == ' ') ? 3 : 7;
-  return w - 1;
+  oled.setFont(FONT_SMALL);
+  return oled.getStrWidth(s);
 }
 
-void printTitle(const char *s, int16_t x, uint16_t color) {
-  display.setTextSize(1, 2);
-  display.setTextColor(color);
-  for (; *s; s++) {
-    if (*s == ' ') { x += 3; continue; }
-    display.setCursor(x, 1);
-    display.print(*s);
-    display.setCursor(x + 1, 1);
-    display.print(*s);
-    x += 7;
-  }
-  display.setTextSize(1);
+void printTitle(const char *s, int16_t x) {
+  oled.setFont(FONT_SMALL);
+  oled.drawStr(x, 12, s);
 }
 
-// ---------- yellow band ----------
+// ---------- title band ----------
 
 void resetTitle() {
   flashInv = false;
@@ -279,10 +271,10 @@ int8_t wifiBars() {
 }
 
 // Pre-rendered bold bitmap (band_text.h) for a known phrase, centered.
-bool drawBandBitmap(const char *t, uint16_t color) {
+bool drawBandBitmap(const char *t) {
   for (const BandText &b : BAND_TEXTS) {
     if (strcmp(b.text, t) == 0) {
-      display.drawBitmap((128 - b.w) / 2, 0, b.bmp, b.w, 16, color);
+      oled.drawBitmap((128 - b.w) / 2, 0, (b.w + 7) / 8, 16, b.bmp);
       return true;
     }
   }
@@ -306,10 +298,12 @@ void drawTitle() {
   }
   int16_t w = titleWidth(t);
   bool inv = seqActive ? true : isOpen() ? flashInv : (millis() / CLOSED_INV_MS) % 2;
-  display.setFont(NULL);
-  display.fillRect(0, 0, 128, BAND_H, inv ? SSD1306_WHITE : SSD1306_BLACK);
-  uint16_t fg = inv ? SSD1306_BLACK : SSD1306_WHITE;
-  if (!drawBandBitmap(t, fg)) printTitle(t, (128 - w) / 2, fg);
+  // Dark layout: the "inverted" state is an outline around the band.
+  oled.setDrawColor(0);
+  oled.drawBox(0, 0, 128, BAND_H);
+  oled.setDrawColor(1);
+  if (inv) oled.drawFrame(0, 0, 128, BAND_H);
+  if (!drawBandBitmap(t)) printTitle(t, (128 - w) / 2);
 
   // Open: flash between normal and inverted. Closed: set per playlist cycle.
   if (isOpen() && millis() - tTimer >= FLASH_MS) {
@@ -321,14 +315,10 @@ void drawTitle() {
 // ---------- blue area ----------
 
 void printCentered(const char *s, int16_t baseline, int16_t xoff = 0) {
-  int16_t x1, y1;
-  uint16_t w, h;
-  display.getTextBounds(s, 0, baseline, &x1, &y1, &w, &h);
-  display.setCursor(xoff + (128 - (int16_t)w) / 2 - x1, baseline);
-  display.print(s);
+  oled.drawStr(xoff + (128 - (int16_t)oled.getStrWidth(s)) / 2, baseline, s);
 }
 
-// JP logo + padlock on a lit background.
+// JP logo + padlock, white on black.
 // shift: px the whole group is pushed right. lift: shackle raise in px.
 // shakeX/Y move the whole padlock; wigX/Y move only the shackle.
 void drawPadlockScene(int16_t shift, int16_t lift, int16_t shakeX, int16_t shakeY,
@@ -336,18 +326,20 @@ void drawPadlockScene(int16_t shift, int16_t lift, int16_t shakeX, int16_t shake
   const int16_t GAP = 12, BODY_W = 26, BODY_H = 20;
   const int16_t lx = (128 - (JP_W + GAP + BODY_W)) / 2 + shift;
   const int16_t bx = lx + JP_W + GAP + shakeX, by = 43 + shakeY;
-  const uint16_t bg = SSD1306_WHITE, fg = SSD1306_BLACK;
 
-  display.fillRect(0, BLUE_Y, 128, BLUE_H, bg);
-  display.drawBitmap(lx, LOGO_Y, JP_BMP, JP_W, JP_H, fg);
+  oled.drawBitmap(lx, LOGO_Y, (JP_W + 7) / 8, JP_H, JP_BMP);
   // Shackle: hollow U, legs hidden in the body when closed
   int16_t sx = bx + 3 + wigX, sy = by - 16 - lift + wigY;
-  display.fillRoundRect(sx, sy, 20, 22, 10, fg);
-  display.fillRoundRect(sx + 4, sy + 4, 12, 22, 6, bg);
+  oled.drawRBox(sx, sy, 20, 22, 10);
+  oled.setDrawColor(0);
+  oled.drawRBox(sx + 4, sy + 4, 12, 22, 6);
+  oled.setDrawColor(1);
   // Body + keyhole
-  display.fillRoundRect(bx, by, BODY_W, BODY_H, 3, fg);
-  display.fillCircle(bx + 13, by + 7, 3, bg);
-  display.fillRect(bx + 12, by + 8, 3, 7, bg);
+  oled.drawRBox(bx, by, BODY_W, BODY_H, 3);
+  oled.setDrawColor(0);
+  oled.drawDisc(bx + 13, by + 7, 3);
+  oled.drawBox(bx + 12, by + 8, 3, 7);
+  oled.setDrawColor(1);
 }
 
 const int16_t LIFT_MAX = 10;
@@ -394,74 +386,53 @@ void drawUnlockAnim(uint32_t t) {
   drawPadlockScene(0, lift, 0, 0, wx, wy);
 }
 
-// Two lines of 12pt text; baselines fit cap height + descenders in rows 16-63.
-void drawMessage(const GFXfont *font, const char *l1, const char *l2,
-                 int16_t xoff, uint16_t color, int16_t base1 = 33, int16_t base2 = 57) {
-  display.setFont(font);
-  display.setTextSize(1);
-  display.setTextColor(color);
+// Two lines of text; baselines fit cap height + descenders in rows 16-63.
+void drawMessage(const uint8_t *font, const char *l1, const char *l2,
+                 int16_t xoff, int16_t base1 = 33, int16_t base2 = 57) {
+  oled.setFont(font);
   printCentered(l1, base1, xoff);
   printCentered(l2, base2, xoff);
-  display.setFont(NULL);
 }
 
-// One line of FreeSans Bold 24pt, centered.
+// One line of the big font, centered.
 void drawBig(const char *s, int16_t baseline) {
-  display.setFont(&FreeSansBold24pt7b);
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
+  oled.setFont(FONT_24);
   printCentered(s, baseline);
-  display.setFont(NULL);
 }
 
-// One word, centered, black on a lit area. track = extra px between letters
-// (negative squeezes). Baseline centers the cap height in rows 16-63.
-void drawWord(const char *w, const GFXfont *font, int8_t track, int16_t cap) {
-  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-  display.setFont(font);
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_BLACK);
-  int16_t x1, y1;
-  uint16_t bw, bh;
+// One word, centered. track = extra px between letters (negative squeezes).
+// Baseline centers the cap height in rows 16-63.
+void drawWord(const char *w, const uint8_t *font, int8_t track, int16_t cap) {
+  oled.setFont(font);
   int16_t base = BLUE_Y + (BLUE_H - cap) / 2 + cap;
-  display.getTextBounds(w, 0, base, &x1, &y1, &bw, &bh);
-  int16_t width = bw + track * ((int16_t)strlen(w) - 1);
-  display.setCursor((128 - width) / 2 - x1, base);
-  for (const char *c = w; *c; c++) {
-    display.print(*c);
-    display.setCursor(display.getCursorX() + track, base);
-  }
-  display.setFont(NULL);
+  int16_t width = oled.getStrWidth(w) + track * ((int16_t)strlen(w) - 1);
+  int16_t x = (128 - width) / 2;
+  for (const char *c = w; *c; c++) x += oled.drawGlyph(x, base, *c) + track;
 }
 
 // "CLOSE" / "THE" / "CAGE", each as big as fits 128 px:
-// CLOSE is 161 px in 24pt so it gets 18pt; CAGE is 132 px in 24pt, squeezed 2 px.
+// CLOSE is too wide for the big font so it gets the 18 one.
 void drawOpenWords(uint32_t t) {
-  if (t < WORD_MS) drawWord("CLOSE", &FreeSansBold18pt7b, 0, 25);
-  else if (t < 2 * WORD_MS) drawWord("THE", &FreeSansBold24pt7b, 0, 34);
-  else drawWord("CAGE", &FreeSansBold24pt7b, -2, 34);
+  if (t < WORD_MS) drawWord("CLOSE", FONT_18, 0, 25);
+  else if (t < 2 * WORD_MS) drawWord("THE", FONT_24, 0, 30);
+  else drawWord("CAGE", FONT_24, 0, 30);
 }
 
-// One word in the built-in font, 6x tall (42 px) and as wide as fits 128 px,
-// black on a lit area. Built-in glyphs are 5 px + 1 px gap per char.
+// One word in the biggest bold font that fits 126 px, centered in rows 16-63.
 void drawBlockWord(const char *w) {
-  int16_t n = strlen(w);
-  int16_t sx = 128 / (6 * n - 1);
-  if (sx > 8) sx = 8;
-  if (sx < 1) sx = 1;
-  int16_t sy = min(6, 3 * (int)sx);  // keep long names from looking like needles
-  int16_t width = n * 6 * sx - sx;
-  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-  display.setFont(NULL);
-  display.setTextSize(sx, sy);
-  display.setTextColor(SSD1306_BLACK);
-  display.setCursor((128 - width) / 2, BLUE_Y + (BLUE_H - 7 * sy) / 2);
-  display.print(w);
-  display.setTextSize(1);
+  static const uint8_t *SIZES[] = {u8g2_font_fub42_tr, u8g2_font_fub35_tr, FONT_24, FONT_18, FONT_12, FONT_9};
+  uint8_t i = 0;
+  for (; i < 5; i++) {
+    oled.setFont(SIZES[i]);
+    if (oled.getStrWidth(w) <= 126) break;
+  }
+  oled.setFont(SIZES[i]);
+  int16_t asc = oled.getAscent();
+  oled.drawStr((128 - oled.getStrWidth(w)) / 2, BLUE_Y + (BLUE_H - asc) / 2 + asc, w);
 }
 
 // Closed but chain not locked, one word at a time:
-// CLOSED (3x wide), BUT (7x), NOT (7x), LOCKED! (3x).
+// CLOSED, BUT, NOT, LOCKED!, each as big as fits.
 void drawNotLocked(uint32_t t) {
   if (t < 700) drawBlockWord("CLOSED");
   else if (t < 1400) drawBlockWord("BUT");
@@ -489,28 +460,21 @@ uint8_t wifiScreenMode() {
   return 1;
 }
 int8_t wifiBars();
-// Biggest of 18/12/9pt bold (then the built-in font) that fits 126 px.
-// Returns false if nothing fit and the built-in font was selected.
+// Biggest of 18/12/9pt bold (then a small font) that fits 126 px.
+// Returns false if nothing fit and the small font was selected.
 bool fitFont(const char *q, bool allow18) {
-  static const GFXfont *SIZES[] = {&FreeSansBold18pt7b, &FreeSansBold12pt7b, &FreeSansBold9pt7b};
-  int16_t x1, y1;
-  uint16_t w, h;
-  for (uint8_t i = allow18 ? 0 : 1; i < 3; i++) {
-    display.setFont(SIZES[i]);
-    display.getTextBounds(q, 0, 0, &x1, &y1, &w, &h);
-    if (w <= 126) return true;
+  static const uint8_t *SIZES[] = {FONT_18, FONT_12, u8g2_font_fub14_tr, FONT_9};
+  for (uint8_t i = allow18 ? 0 : 1; i < 4; i++) {
+    oled.setFont(SIZES[i]);
+    if (oled.getStrWidth(q) <= 126) return true;
   }
-  display.setFont(NULL);  // built-in 6 px/char fallback
+  oled.setFont(u8g2_font_6x12_tr);
   return false;
 }
 
 void printFit(const char *q, int16_t baseline, bool allow18) {
-  if (!fitFont(q, allow18)) {  // built-in font draws from the top, not the baseline
-    display.setCursor((128 - (int16_t)strlen(q) * 6) / 2, baseline - 7);
-    display.print(q);
-  } else {
-    printCentered(q, baseline);
-  }
+  fitFont(q, allow18);
+  printCentered(q, baseline);
 }
 
 // First half: signal (or setup / connecting). Second half: where to browse.
@@ -519,8 +483,6 @@ void drawWifiScreen() {
   int8_t bars = wifiBars();
   bool setup = bars < 0 && wm.getConfigPortalActive();
   bool addr = wifiUrlOnly || (millis() - bTimer >= WIFI_MS / 2 && (bars >= 0 || setup));
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
   if (addr) {
     static char ip[16];
     if (setup) {
@@ -533,46 +495,37 @@ void drawWifiScreen() {
     }
   } else {
     const char *q = setup ? "CageLock" : bars < 0 ? "Connecting" : Q[bars];
-    display.setFont(&FreeSansBold12pt7b);
+    oled.setFont(FONT_12);
     printCentered(setup ? "Join WiFi" : "WiFi", 35);
     printFit(q, 62, true);
   }
-  display.setFont(NULL);
 }
 
 // Open but chain locked: shouldn't happen (chain locked with the door open).
 void drawWarn() {
-  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-  display.setFont(&FreeSansBold9pt7b);
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_BLACK);
+  oled.setFont(FONT_9);
   printCentered("Chain is", 28);
   printCentered("locked but", 43);
   printCentered("door open!", 58);
-  display.setFont(NULL);
 }
 
 // "Need something?" -> "Get A-1" -> "OR" -> inverted "Call Your Manager"
 // panel slides in from the right. t = ms into the hold.
 void drawMsgScene(uint32_t t) {
   if (t < NEED_MS) {
-    drawMessage(&FreeSans12pt7b, "Need", "something?", 0, SSD1306_WHITE);
+    drawMessage(FONT_REG, "Need", "something?", 0);
     return;
   }
   t -= NEED_MS;
   if (t < GET_MS) {
     // Scroll "Get A-1" together; "A-1" (67 px) parks in the center while
     // "Get" (77 px, A-1 starts 92 px after it) keeps going off the left edge.
-    const int16_t GET_END = -78, A1_OFS = 92, A1_X = (128 - 67) / 2;
+    oled.setFont(FONT_24);
+    const int16_t getW = oled.getStrWidth("Get"), a1W = oled.getStrWidth("A-1");
+    const int16_t GET_END = -(getW + 1), A1_OFS = getW + 15, A1_X = (128 - a1W) / 2;
     int16_t x = (t < GET_SCROLL_MS) ? 128 - (int16_t)((128 - GET_END) * t / GET_SCROLL_MS) : GET_END;
-    display.setFont(&FreeSansBold24pt7b);
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(x, 57);
-    display.print("Get");
-    display.setCursor(max(x + A1_OFS, (int)A1_X), 57);
-    display.print("A-1");
-    display.setFont(NULL);
+    oled.drawStr(x, 57, "Get");
+    oled.drawStr(max(x + A1_OFS, (int)A1_X), 57, "A-1");
     return;
   }
   t -= GET_MS;
@@ -580,27 +533,28 @@ void drawMsgScene(uint32_t t) {
   if (t < OR_MS) return;
   t -= OR_MS;
   int16_t x = (t >= SLIDE_MS) ? 0 : 128 - (int16_t)(128 * t / SLIDE_MS);
-  display.fillRect(x, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-  drawMessage(&FreeSansBold12pt7b, "Call Your", "Manager", x, SSD1306_BLACK, 38, 58);  // 2 px gap, "g" ends on the last row
+  oled.drawFrame(x, BLUE_Y, 128, BLUE_H);  // outlined panel instead of an inverted one
+  drawMessage(FONT_12, "Call Your", "Manager", x, 38, 58);  // 2 px gap, "g" ends on the last row
 }
 
 void drawCompany() {
   // PRODUCTION / P O L K / TECHNOLOGIES, one pre-rendered 128x48 bitmap
   // (company_text.h) laid out like the Polk logo, all lines the same width.
-  display.drawBitmap(0, BLUE_Y, COMPANY_BMP, COMPANY_BMP_W, COMPANY_BMP_H, SSD1306_WHITE);
+  oled.drawBitmap(0, BLUE_Y, (COMPANY_BMP_W + 7) / 8, COMPANY_BMP_H, COMPANY_BMP);
 }
 
 void drawOpenMsg() {
-  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-  drawMessage(&FreeSansBold12pt7b, OPEN_L1, OPEN_L2, 0, SSD1306_BLACK);
+  drawMessage(FONT_12, OPEN_L1, OPEN_L2, 0);
 }
 
 // Ordered dither: clear pixels above the current level so the area "fades".
 void applyFade(uint8_t level) {
   if (level >= 16) return;
+  oled.setDrawColor(0);
   for (int16_t y = BLUE_Y; y < BLUE_Y + BLUE_H; y++)
     for (int16_t x = 0; x < 128; x++)
-      if (BAYER[y & 3][x & 3] >= level) display.drawPixel(x, y, SSD1306_BLACK);
+      if (BAYER[y & 3][x & 3] >= level) oled.drawPixel(x, y);
+  oled.setDrawColor(1);
 }
 
 // ---------- unlock sequence ----------
@@ -652,13 +606,9 @@ bool startUnlockSeq(const char *name, const char *by, const char *src) {
   snprintf(d, sizeof(d), "src=%s;for=%s;by=%s", src, seqName, seqBy);
   logEvent("unlock_request", d);
   // Measure the name so it scrolls fully on and off, at a fixed speed.
-  int16_t y1;
-  uint16_t w, h;
-  display.setFont(&FreeSansBold24pt7b);
-  display.setTextSize(1);
-  display.getTextBounds(seqName, 0, NAME_BASE, &seqNameX1, &y1, &w, &h);
-  display.setFont(NULL);
-  seqNameW = w;
+  oled.setFont(FONT_24);
+  seqNameX1 = 0;
+  seqNameW = oled.getStrWidth(seqName);
   seqNameMs = min((uint32_t)NAME_MAX_MS, (uint32_t)(128 + seqNameW) * 1000 / NAME_PX_PER_S);
   seqActive = true;
   seqFired = false;
@@ -668,27 +618,20 @@ bool startUnlockSeq(const char *name, const char *by, const char *src) {
   return true;
 }
 
-// One word in 24pt bold, black on a lit area, centered on its full glyph box
+// One word in the big font, centered on its full glyph box
 // (so descenders like the g in "Cage" stay on screen).
 void drawBigWord(const char *w) {
-  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-  display.setFont(&FreeSansBold24pt7b);
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_BLACK);
-  int16_t x1, y1;
-  uint16_t bw, bh;
-  display.getTextBounds(w, 0, 0, &x1, &y1, &bw, &bh);
-  display.setCursor((128 - (int16_t)bw) / 2 - x1, BLUE_Y + (BLUE_H - (int16_t)bh) / 2 - y1);
-  display.print(w);
-  display.setFont(NULL);
+  oled.setFont(FONT_24);
+  int16_t asc = oled.getAscent(), h = asc;
+  if (strpbrk(w, "gjpqy")) h -= oled.getDescent();  // descent is negative
+  oled.drawStr((128 - oled.getStrWidth(w)) / 2, BLUE_Y + (BLUE_H - h) / 2 + asc, w);
 }
 
 void drawSeq(uint32_t t) {
   if (t < SEQ_WORD_MS) {
     // "Unlocking" is 223 px in 24pt; pre-rendered condensed so it can stay big.
-    display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-    display.drawBitmap((128 - UNLOCKING_BMP_W) / 2, BLUE_Y + (BLUE_H - UNLOCKING_BMP_H) / 2,
-                       UNLOCKING_BMP, UNLOCKING_BMP_W, UNLOCKING_BMP_H, SSD1306_BLACK);
+    oled.drawBitmap((128 - UNLOCKING_BMP_W) / 2, BLUE_Y + (BLUE_H - UNLOCKING_BMP_H) / 2,
+                    (UNLOCKING_BMP_W + 7) / 8, UNLOCKING_BMP_H, UNLOCKING_BMP);
     return;
   }
   t -= SEQ_WORD_MS;
@@ -702,13 +645,8 @@ void drawSeq(uint32_t t) {
     if (t < seqNameMs) {
       // Scroll right to left: starts just off the right edge, ends just off the left.
       int16_t x = 128 - (int16_t)((uint32_t)(128 + seqNameW) * t / seqNameMs) - seqNameX1;
-      display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_WHITE);
-      display.setFont(&FreeSansBold24pt7b);
-      display.setTextSize(1);
-      display.setTextColor(SSD1306_BLACK);
-      display.setCursor(x, NAME_BASE);
-      display.print(seqName);
-      display.setFont(NULL);
+      oled.setFont(FONT_24);
+      oled.drawStr(x, NAME_BASE, seqName);
       return;
     }
     t -= seqNameMs;
@@ -720,8 +658,8 @@ void drawSeq(uint32_t t) {
     drawBigWord(N[t / SEQ_COUNT_MS]);
     return;
   }
-  // 137 px in 12pt bold; 2 px tighter letters bring it to 123 px.
-  drawWord("UNLOCKED", &FreeSansBold12pt7b, -2, 17);
+  // 132 px in the 12 font; 1 px tighter letters bring it to 125 px.
+  drawWord("UNLOCKED", FONT_12, -1, 17);
 }
 
 // Fires the relay at the end of the countdown, then hands the screen back.
@@ -794,7 +732,9 @@ void nextItem() {
 }
 
 void drawBlue() {
-  display.fillRect(0, BLUE_Y, 128, BLUE_H, SSD1306_BLACK);
+  oled.setDrawColor(0);
+  oled.drawBox(0, BLUE_Y, 128, BLUE_H);
+  oled.setDrawColor(1);
   uint32_t now = millis();
   if (seqActive) {
     drawSeq(now - seqStart);
@@ -934,11 +874,11 @@ const esc=t=>t.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&q
 const key=()=>{localStorage.k=$('key').value;return $('key').value};
 $('by').value=localStorage.by||'';$('by').onchange=()=>localStorage.by=$('by').value;
 $('key').onchange=key;
-async function poll(){try{const s=await(await fetch('/status')).json();
+const poll=async()=>{try{const s=await(await fetch('/status')).json();
 $('st').textContent=s.state;$('st').className=s.state=='CLOSED & LOCKED'?'':'bad';
 const t=s.time?new Date(s.time*1000).toLocaleString():'clock not synced';
 const o=s.open_s?' - open '+Math.floor(s.open_s/60)+'m '+(s.open_s%60)+'s':'';
-$('sig').textContent='WiFi '+s.wifi+' ('+s.rssi+' dBm) - '+t+o+(s.relay?' - relay ON':'');}catch(e){$('st').textContent='offline';}}
+$('sig').textContent='WiFi '+s.wifi+' ('+s.rssi+' dBm) - '+t+o+(s.relay?' - relay ON':'');}catch(e){$('st').textContent='offline';}};
 $('go').onclick=async()=>{$('go').disabled=true;
 localStorage.by=$('by').value;
 try{const r=await fetch('/unlock?name='+encodeURIComponent($('name').value)+'&by='+encodeURIComponent($('by').value),{method:'PUT',headers:{'X-Api-Key':key()}});
@@ -1065,7 +1005,7 @@ void setupWeb() {
   wm.setMenu(menu, 2);
 
   const char *keys[] = {"X-Api-Key"};
-  server.collectHeaders(keys, 1);
+  server.collectHeaders(keys, (size_t)1);
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
   server.on("/unlock", HTTP_PUT, handleUnlock);
@@ -1149,17 +1089,20 @@ void setup() {
 
   Wire.begin(D2, D1);  // SDA, SCL
   Wire.setClock(400000);
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println(F("\nSSD1306 not found at 0x3C - check wiring"));
+  Wire.beginTransmission(0x3C);
+  if (Wire.endTransmission() != 0) {
+    Serial.println(F("\nSSD1309 not found at 0x3C - check wiring"));
     while (true) delay(1000);
   }
+  oled.setI2CAddress(0x3C << 1);
+  oled.begin();
+  oled.setContrast(128);
   Serial.println(F("\nCage Lock"));
   fsOk = LittleFS.begin();
   configTime(TZ_INFO, "pool.ntp.org", "time.nist.gov");  // syncs once WiFi is up
   logEvent("boot", ESP.getResetReason().c_str());
   setupWeb();
-  display.setTextWrap(false);
-  display.clearDisplay();
+  oled.clearBuffer();
 
   doorStable = doorLast = digitalRead(DOOR_PIN);
   if (isOpen()) doorOpenedAt = millis();  // time an already-open door from boot
@@ -1219,6 +1162,6 @@ void loop() {
     lastFrame = millis();
     drawBlue();   // first, so the band covers anything that slid above row 16
     drawTitle();
-    display.display();
+    oled.sendBuffer();
   }
 }

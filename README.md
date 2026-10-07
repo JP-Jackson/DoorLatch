@@ -10,7 +10,7 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 |---|---|---|---|---|
 | Relay IN1 | D5 | 14 | OUTPUT | Active LOW. Write HIGH before `pinMode` so it doesn't click at boot. Pulse 500 ms max, never hold on. |
 | Buzzer | D8 | 15 | OUTPUT | Passive piezo through 100 Ω. Boot strap pin, must be LOW at boot. |
-| OLED SCL | D1 | 5 | I2C | SSD1306 128x64, address 0x3C. Board header order: GND, VCC, SCL, SDA. Yellow/blue two-color panel (top 16 rows yellow) |
+| OLED SCL | D1 | 5 | I2C | SSD1309 128x64 (2.42" HiLetgo), address 0x3C. Board header order: GND, VCC, SCL, SDA. |
 | OLED SDA | D2 | 4 | I2C | |
 | Door switch | D7 | 13 | INPUT_PULLUP | To GND. LOW = door closed |
 | Lock feedback | D6 | 12 | INPUT_PULLUP | Lock's dry contact to GND, closed when locked (LOW = locked). Never 12V on this pin |
@@ -23,13 +23,13 @@ Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a br
 
 **1. CLOSED + LOCKED** (normal)
 - Door LOW, Chain LOW
-- Band: CLOSED & LOCKED, swaps normal/inverted every 5 s
+- Band: CLOSED & LOCKED, swaps plain/outlined every 5 s
 - Screen: JP lock -> Need something? -> Get A-1 -> OR -> Call Your Manager -> PRODUCTION / P O L K / TECHNOLOGIES -> WiFi (address only, once a minute, when the signal is FAIR or better; full signal screen when WEAK/BAD/offline)
 - LED on
 
 **2. CLOSED + UNLOCKED**
 - Door LOW, Chain HIGH
-- Band: CLOSED & UNLOCKED, swaps normal/inverted every 5 s
+- Band: CLOSED & UNLOCKED, swaps plain/outlined every 5 s
 - Screen: CLOSED / BUT / NOT / LOCKED! one huge word at a time
 - LED on
 
@@ -100,10 +100,17 @@ epoch,local_time,uptime_s,event,detail
 - 12V pulse-type cabinet / solenoid lock + 12V supply
 - 1N4007 diode (flyback across lock)
 - Passive piezo buzzer + 100 Ω resistor
-- 0.96" I2C OLED, SSD1306, 0x3C
+- 2.42" I2C OLED, SSD1309, 0x3C
 - Door switch (magnetic) + magnet
 - 12V lock has a built-in feedback switch (dry contact, closed when locked)
 - Breadboard + jumpers
+
+## Display notes (SSD1309)
+
+- U8g2 driver `U8G2_SSD1309_128X64_NONAME0_F_HW_I2C`, address 0x3C, default settings, `setContrast(128)`. The old Adafruit SSD1306 driver is no longer used.
+- This panel shows horizontal streaks whenever most pixels are lit (full white, large filled or inverted areas). Contrast 128, 5V on VCC and different pre-charge (0xD9) / VCOMH (0xDB) values did not remove them (see `tests/oled_u8g2_test/`), so treat it as a panel limit.
+- The UI is therefore dark: white text and bitmaps on black, an outline (`drawFrame`) where the old layout inverted the band or the "Call Your Manager" panel, and filled areas only for small icons (padlock). Don't add large filled or inverted areas.
+- Fonts are U8g2 bold (`fub*`) sized to match the old FreeSans Bold 9/12/18/24 pt text.
 
 ## Layout
 
@@ -112,7 +119,8 @@ cage_lock/                main sketch: door + chain-lock status (band shows e.g.
 docs/wiring.html          wiring page (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse
-tests/oled_test/          scrolling "Cage Locked/Unlocked" title (D6) + JP logo
+tests/oled_test/          scrolling "Cage Locked/Unlocked" title (D6) + JP logo (old Adafruit SSD1306 version)
+tests/oled_u8g2_test/     SSD1309 + U8g2 full-white streak test, cycling pre-charge/VCOMH settings
 tests/reed_test/          prints OPEN/CLOSED, on-board LED mirrors state
 secrets.h.example         copy to secrets.h (gitignored) for WiFi creds
 ```
@@ -122,7 +130,7 @@ secrets.h.example         copy to secrets.h (gitignored) for WiFi creds
 ```sh
 arduino-cli config add board_manager.additional_urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
 arduino-cli core update-index && arduino-cli core install esp8266:esp8266
-arduino-cli lib install "Adafruit SSD1306" "Adafruit GFX Library" "WiFiManager"   # LittleFS + time are built into the ESP8266 core
+arduino-cli lib install "U8g2" "WiFiManager"   # LittleFS + time are built into the ESP8266 core
 
 FQBN=esp8266:esp8266:nodemcuv2
 arduino-cli compile -b $FQBN tests/relay_test
