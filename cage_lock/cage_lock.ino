@@ -209,6 +209,17 @@ U8G2_SSD1309_128X64_NONAME0_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
 #define FONT_REG u8g2_font_fur17_tr  // regular, cap 17
 #define FONT_SMALL u8g2_font_6x13B_tr  // band fallback, 6 px per char
 
+// U8g2 reads bitmaps with plain byte loads, which crash on flash (PROGMEM) data
+// on the ESP8266, so copy one row at a time to RAM. Bits are MSB first, rows padded to bytes.
+void drawPgmBitmap(int16_t x, int16_t y, uint8_t w, uint8_t h, const uint8_t *bmp) {
+  uint8_t row[24];
+  const uint8_t cnt = (w + 7) / 8;
+  for (uint8_t j = 0; j < h; j++) {
+    memcpy_P(row, bmp + (uint16_t)j * cnt, cnt);
+    oled.drawBitmap(x, y + j, cnt, 1, row);
+  }
+}
+
 int doorStable = -1, doorLast = -1;
 int lockStable = -1, lockLast = -1;
 uint32_t lockChange = 0;
@@ -274,7 +285,7 @@ int8_t wifiBars() {
 bool drawBandBitmap(const char *t) {
   for (const BandText &b : BAND_TEXTS) {
     if (strcmp(b.text, t) == 0) {
-      oled.drawBitmap((128 - b.w) / 2, 0, (b.w + 7) / 8, 16, b.bmp);
+      drawPgmBitmap((128 - b.w) / 2, 0, b.w, 16, b.bmp);
       return true;
     }
   }
@@ -327,7 +338,7 @@ void drawPadlockScene(int16_t shift, int16_t lift, int16_t shakeX, int16_t shake
   const int16_t lx = (128 - (JP_W + GAP + BODY_W)) / 2 + shift;
   const int16_t bx = lx + JP_W + GAP + shakeX, by = 43 + shakeY;
 
-  oled.drawBitmap(lx, LOGO_Y, (JP_W + 7) / 8, JP_H, JP_BMP);
+  drawPgmBitmap(lx, LOGO_Y, JP_W, JP_H, JP_BMP);
   // Shackle: hollow U, legs hidden in the body when closed
   int16_t sx = bx + 3 + wigX, sy = by - 16 - lift + wigY;
   oled.drawRBox(sx, sy, 20, 22, 10);
@@ -540,7 +551,7 @@ void drawMsgScene(uint32_t t) {
 void drawCompany() {
   // PRODUCTION / P O L K / TECHNOLOGIES, one pre-rendered 128x48 bitmap
   // (company_text.h) laid out like the Polk logo, all lines the same width.
-  oled.drawBitmap(0, BLUE_Y, (COMPANY_BMP_W + 7) / 8, COMPANY_BMP_H, COMPANY_BMP);
+  drawPgmBitmap(0, BLUE_Y, COMPANY_BMP_W, COMPANY_BMP_H, COMPANY_BMP);
 }
 
 void drawOpenMsg() {
@@ -630,8 +641,8 @@ void drawBigWord(const char *w) {
 void drawSeq(uint32_t t) {
   if (t < SEQ_WORD_MS) {
     // "Unlocking" is 223 px in 24pt; pre-rendered condensed so it can stay big.
-    oled.drawBitmap((128 - UNLOCKING_BMP_W) / 2, BLUE_Y + (BLUE_H - UNLOCKING_BMP_H) / 2,
-                    (UNLOCKING_BMP_W + 7) / 8, UNLOCKING_BMP_H, UNLOCKING_BMP);
+    drawPgmBitmap((128 - UNLOCKING_BMP_W) / 2, BLUE_Y + (BLUE_H - UNLOCKING_BMP_H) / 2,
+                  UNLOCKING_BMP_W, UNLOCKING_BMP_H, UNLOCKING_BMP);
     return;
   }
   t -= SEQ_WORD_MS;
