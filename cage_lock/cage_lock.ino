@@ -40,10 +40,17 @@
 // Web API (port 80):
 //   GET /status  -> {"door":"closed","chain":"locked","state":"CLOSED & LOCKED",
 //                    "rssi":-61,"relay":false}
-//   PUT /unlock?name=JP&by=Tony -> runs the unlock sequence. name = who it's opened
-//                   for (shown on screen), by = who's unlocking; both optional, 32 chars.
+//   PUT /unlock?name=JP&by=Tony[&cmd=ID&ts=EPOCH] -> runs the unlock sequence.
+//                   name = who it's opened for (shown on screen), by = who's unlocking;
+//                   both optional, 32 chars. Params may instead be a JSON body
+//                   {"name","by","cmd","ts"} (keeps names out of URLs/proxy logs).
+//                   cmd: command id (max 40, A-Z a-z 0-9 - _), logged on unlock_request
+//                   and relay_pulse; reused ids are refused (last 32 kept in flash).
+//                   ts: request time; refused if the clock isn't synced or |now-ts| > 60 s.
 //                   Needs header "X-Api-Key: <API_KEY>". 202 accepted (relay fires
-//                   at the end of the countdown), 401 bad/missing key, 409 busy.
+//                   at the end of the countdown), 401 bad/missing key, 409 busy,
+//                   409 {"error":"duplicate"} reused cmd, 403 {"error":"stale"} ts too
+//                   old/new, 503 {"error":"clock not synced"}, 400 {"error":"bad cmd"}.
 //   PUT /wifisetup -> (key) switch to the CageLock setup hotspot. 202.
 //   GET /log[?since=EPOCH] -> (key, header or ?key=) the log as CSV; with since,
 //                   only synced entries at/after that time.
@@ -99,6 +106,8 @@ uint32_t portalRequestAt = 0;                 // web "Configure WiFi": start hot
 
 // ---------- event log ----------
 
+const char FW_VERSION[] = "cage_lock 2026.10.04";
+char bootId[9] = "";                          // random per boot, for dedup across reboots
 const char TZ_INFO[] = "CST6CDT,M3.2.0,M11.1.0";  // US Central with DST
 const char LOG_PATH[] = "/log.csv", LOG_OLD[] = "/log.old.csv";
 const char LOG_HEADER[] = "epoch,local_time,uptime_s,event,detail\n";
@@ -109,7 +118,7 @@ bool timeValid() { return time(nullptr) > 1700000000; }  // NTP has synced
 
 // One CSV line to flash (and serial). Commas/quotes/newlines in detail become spaces.
 void logEvent(const char *event, const char *detail = "") {
-  char clean[120];
+  char clean[160];
   uint8_t n = 0;
   for (; *detail && n < sizeof(clean) - 1; detail++)
     clean[n++] = (*detail == ',' || *detail == '"' || *detail == '\n' || *detail == '\r') ? ' ' : *detail;
@@ -122,7 +131,7 @@ void logEvent(const char *event, const char *detail = "") {
     localtime_r(&now, &t);
     strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &t);
   }
-  char line[200];
+  char line[240];
   snprintf(line, sizeof(line), "%ld,%s,%lu,%s,%s\n", ok ? (long)now : 0L, ts,
            (unsigned long)(millis() / 1000), event, clean);
   Serial.print(F("LOG "));
@@ -584,6 +593,7 @@ bool seqActive = false, seqFired = false;
 uint32_t seqStart = 0;
 char seqName[33] = "";               // who it's opened for (shown), up to 32 chars
 char seqBy[33] = "";                 // who unlocked it remotely
+char seqCmd[41] = "";                // command id from Base44 (optional)
 // Door-open attribution: an unlock within DOOR_ATTRIB_MS of the door opening.
 const uint32_t DOOR_ATTRIB_MS = 120000;
 uint32_t lastPulseAt = 0, doorOpenedAt = 0;
@@ -608,13 +618,15 @@ void cleanName(char *dst, size_t cap, const char *n) {
 }
 void setSeqName(const char *n) { cleanName(seqName, sizeof(seqName), n); }
 
-bool startUnlockSeq(const char *name, const char *by, const char *src) {
+bool startUnlockSeq(const char *name, const char *by, const char *src, const char *cmd = "") {
   if (seqActive || relayActive) return false;
   setSeqName(name);
   cleanName(seqBy, sizeof(seqBy), by);
   if (!seqBy[0]) strcpy(seqBy, "unknown");
-  char d[100];
-  snprintf(d, sizeof(d), "src=%s;for=%s;by=%s", src, seqName, seqBy);
+  char d[150];
+  strncpy(seqCmd, cmd, sizeof(seqCmd) - 1);
+  seqCmd[sizeof(seqCmd) - 1] = 0;
+  snprintf(d, sizeof(d), "src=%s;for=%s;by=%s;cmd=%s", src, seqName, seqBy, seqCmd);
   logEvent("unlock_request", d);
   // Measure the name so it scrolls fully on and off, at a fixed speed.
   oled.setFont(FONT_24);
@@ -807,8 +819,9 @@ bool pulseRelay() {
   digitalWrite(RELAY_PIN, RELAY_ON);
   relayActive = true;
   relayOnAt = millis();
-  char d[80];
-  snprintf(d, sizeof(d), "for=%s;by=%s", seqActive ? seqName : "", seqActive ? seqBy : "");
+  char d[130];
+  snprintf(d, sizeof(d), "for=%s;by=%s;cmd=%s", seqActive ? seqName : "", seqActive ? seqBy : "",
+           seqActive ? seqCmd : "");
   logEvent("relay_pulse", d);
   return true;
 }
@@ -929,7 +942,11 @@ void handleStatus() {
   j += (isOpen() && doorOpenedAt) ? (long)((millis() - doorOpenedAt) / 1000) : 0L;
   j += ",\"time\":";
   j += timeValid() ? (long)time(nullptr) : 0L;
-  j += ",\"relay\":";
+  j += ",\"boot_id\":\"";
+  j += bootId;
+  j += "\",\"fw\":\"";
+  j += FW_VERSION;
+  j += "\",\"relay\":";
   j += relayActive ? "true" : "false";
   j += "}";
   sendCors();
@@ -981,10 +998,101 @@ void handleLog() {
   server.sendContent("");
 }
 
+// ---- used command ids (replay protection), persisted in flash ----
+const char CMDS_PATH[] = "/cmds.txt";
+const uint8_t CMDS_KEEP = 32;
+
+bool cmdUsed(const String &id) {
+  if (!fsOk || !LittleFS.exists(CMDS_PATH)) return false;
+  File f = LittleFS.open(CMDS_PATH, "r");
+  bool found = false;
+  while (f.available() && !found) found = f.readStringUntil('\n') == id;
+  f.close();
+  return found;
+}
+
+void rememberCmd(const String &id) {
+  if (!fsOk) return;
+  String keep[CMDS_KEEP];
+  uint8_t n = 0;
+  if (LittleFS.exists(CMDS_PATH)) {
+    File f = LittleFS.open(CMDS_PATH, "r");
+    while (f.available()) {
+      String l = f.readStringUntil('\n');
+      if (!l.length()) continue;
+      if (n == CMDS_KEEP) {  // drop the oldest
+        for (uint8_t i = 1; i < CMDS_KEEP; i++) keep[i - 1] = keep[i];
+        n--;
+      }
+      keep[n++] = l;
+    }
+    f.close();
+  }
+  File f = LittleFS.open(CMDS_PATH, "w");
+  uint8_t start = n == CMDS_KEEP ? 1 : 0;  // make room for the new one
+  for (uint8_t i = start; i < n; i++) f.print(keep[i] + "\n");
+  f.print(id + "\n");
+  f.close();
+}
+
+// Value of `key` from the query string, or from a flat JSON body
+// ({"name":"JP","ts":1759...}). Good enough for our own fixed fields.
+String reqParam(const char *key) {
+  if (server.hasArg(key)) return server.arg(key);
+  String body = server.arg("plain");
+  String k = String("\"") + key + "\"";
+  int i = body.indexOf(k);
+  if (i < 0) return "";
+  i = body.indexOf(':', i + k.length());
+  if (i < 0) return "";
+  i++;
+  while (i < (int)body.length() && body[i] == ' ') i++;
+  if (i < (int)body.length() && body[i] == '"') {
+    int e = body.indexOf('"', i + 1);
+    return e < 0 ? "" : body.substring(i + 1, e);
+  }
+  int e = i;
+  while (e < (int)body.length() && (isDigit(body[e]) || body[e] == '-')) e++;
+  return body.substring(i, e);
+}
+
+bool cmdIdOk(const String &id) {
+  if (id.length() > 40) return false;
+  for (unsigned i = 0; i < id.length(); i++) {
+    char c = id[i];
+    if (!isAlphaNumeric(c) && c != '-' && c != '_') return false;
+  }
+  return true;
+}
+
 void handleUnlock() {
   sendCors();
   if (!keyOk("unlock")) return;
-  if (startUnlockSeq(server.arg("name").c_str(), server.arg("by").c_str(), "web")) {
+  String cmd = reqParam("cmd"), tsArg = reqParam("ts");
+  if (!cmdIdOk(cmd)) {
+    server.send(400, "application/json", "{\"ok\":false,\"error\":\"bad cmd\"}");
+    return;
+  }
+  if (tsArg.length()) {  // remote requests carry a timestamp: refuse stale or unverifiable
+    if (!timeValid()) {
+      logEvent("unlock_denied", ("clock not synced;cmd=" + cmd).c_str());
+      server.send(503, "application/json", "{\"ok\":false,\"error\":\"clock not synced\"}");
+      return;
+    }
+    long skew = (long)time(nullptr) - tsArg.toInt();
+    if (skew > 60 || skew < -60) {
+      logEvent("unlock_denied", ("stale;cmd=" + cmd).c_str());
+      server.send(403, "application/json", "{\"ok\":false,\"error\":\"stale\"}");
+      return;
+    }
+  }
+  if (cmd.length() && cmdUsed(cmd)) {
+    logEvent("unlock_denied", ("duplicate;cmd=" + cmd).c_str());
+    server.send(409, "application/json", "{\"ok\":false,\"error\":\"duplicate\"}");
+    return;
+  }
+  if (startUnlockSeq(reqParam("name").c_str(), reqParam("by").c_str(), "web", cmd.c_str())) {
+    if (cmd.length()) rememberCmd(cmd);
     String j = "{\"ok\":true,\"fires_in_ms\":";
     j += (long)seqFireAt();
     j += "}";
@@ -1111,7 +1219,8 @@ void setup() {
   Serial.println(F("\nCage Lock"));
   fsOk = LittleFS.begin();
   configTime(TZ_INFO, "pool.ntp.org", "time.nist.gov");  // syncs once WiFi is up
-  logEvent("boot", ESP.getResetReason().c_str());
+  snprintf(bootId, sizeof(bootId), "%08x", ESP.random());
+  logEvent("boot", ("reason=" + ESP.getResetReason() + ";boot_id=" + bootId + ";fw=" + FW_VERSION).c_str());
   setupWeb();
   oled.clearBuffer();
 

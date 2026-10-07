@@ -4,6 +4,9 @@ ESP8266 (HiLetgo NodeMCU, CP2102) Cage Lock controller: 12V pulse-type cabinet l
 
 Wiring diagram + schematic: [`docs/wiring.html`](docs/wiring.html) (open in a browser).
 
+**Picking this up?** Start with [`docs/HANDOVER.md`](docs/HANDOVER.md) (status, next steps) and
+[`docs/REMOTE_PLAN.md`](docs/REMOTE_PLAN.md) (remote unlock via Raspberry Pi + Cloudflare Tunnel + Base44).
+
 ## Pin map
 
 | Function | NodeMCU | GPIO | Mode | Notes |
@@ -61,6 +64,8 @@ Create `cage_lock/secrets.h` from `cage_lock/secrets.h.example` (gitignored) wit
 - `PUT http://cagelock.local/unlock?name=JP&by=Tony` with header `X-Api-Key: <API_KEY>` -> unlock sequence: Unlocking / the / Cage / for (one word each, fast) / name scrolls (24pt bold, any length) / in / 3 / 2 / 1 (0.6 s each) -> relay pulse -> "UNLOCKED". `name` = who it's opened for (shown on screen), `by` = who is unlocking (logged); both optional, max 32 chars; long names scroll faster, 5 s max. 202 accepted (`fires_in_ms`), 401 bad key, 409 busy.
 - `PUT /wifisetup` (key) -> lock switches to the CageLock setup hotspot (also a "Configure WiFi" button on the page).
 - `GET /log` (key via header or `?key=`) -> event log CSV; `?since=<epoch>` returns only newer synced entries.
+- Remote callers (Base44 via Cloudflare Tunnel) add `cmd=<id>&ts=<epoch>` (or send `{"name","by","cmd","ts"}` as a JSON body): refused if the clock isn't synced (503), `ts` is more than 60 s off (403) or `cmd` was already used (409 duplicate; last 32 ids kept in flash). `cmd` is logged on `unlock_request` and `relay_pulse` so Base44 can confirm the command fired.
+- `/status` also reports `boot_id` (random per boot) and `fw`; the boot log line is `reason=...;boot_id=...;fw=...`.
 - Serial: `unlock` or `unlock JP` runs the same sequence. Band shows "Unlocking remotely" / "Please standby" until the relay fires, then "UNLOCKED".
 - CORS open for a browser web app. WiFi signal is a screen in the CLOSED & LOCKED loop: "WiFi" / GREAT, GOOD, FAIR, WEAK, BAD; "WiFi" / "Connecting" while offline; "Join WiFi" / "CageLock" while the setup hotspot is up. Second half of the screen shows where to browse: "cagelock.local" / IP, or "Then open" / "192.168.4.1" in setup mode.
 
@@ -116,7 +121,9 @@ epoch,local_time,uptime_s,event,detail
 
 ```
 cage_lock/                main sketch: door + chain-lock status (band shows e.g. CLOSED & LOCKED), playlist per state, relay via serial "unlock" or web PUT /unlock (API key)
-docs/wiring.html          wiring page (keep in sync with hardware changes)
+docs/wiring.html          wiring page
+docs/HANDOVER.md          current status, next steps, how to resume
+docs/REMOTE_PLAN.md       remote unlock architecture, Base44 contracts, tunnel setup (keep in sync with hardware changes)
 tests/buzzer_test/        chirps every 3 s
 tests/relay_test/         send 'p' over serial for one 500 ms pulse
 tests/oled_test/          scrolling "Cage Locked/Unlocked" title (D6) + JP logo (old Adafruit SSD1306 version)
